@@ -7,6 +7,7 @@ import { mediaEl } from './media.js';
 import { play as sfx, sound, unlock } from './sound.js';
 import { Host, errText } from './net.js';
 import { controlsHTML, bindControls, setHTML } from './controls.js';
+import { saveGame } from './history.js';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const SAVE_KEY = 'plyukh-game';
@@ -149,8 +150,23 @@ export async function startPlay(root, boardId) {
     S.fin = null;
     for (const p of S.players) p.score = 0;
     S.picker = S.players.length ? S.players[Math.floor(Math.random() * S.players.length)].id : null;
+    S.gameId = uid('g');
+    S.startedAt = Date.now();
+    S.endedAt = 0;
     placeDDs();
     S.phase = 'board';
+  }
+
+  function recordHistory() {
+    saveGame({
+      id: S.gameId || (S.gameId = uid('g')),
+      at: S.endedAt || (S.endedAt = Date.now()),
+      startedAt: S.startedAt || 0,
+      board: board.title,
+      boardId: board.id,
+      mode: S.mode,
+      players: standings().map((p) => ({ name: p.name, score: p.score })),
+    });
   }
 
   // ---------- actions (from the TV screen, keyboard or the host's phone) ----------
@@ -503,6 +519,7 @@ export async function startPlay(root, boardId) {
 
   function commit() {
     if (destroyed) return;
+    if (S.phase === 'end') recordHistory();
     persist();
     render();
     broadcast();

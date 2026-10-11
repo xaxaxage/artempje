@@ -1,8 +1,11 @@
 import * as db from './db.js';
-import { esc, uid, toast, dialog, confirmDlg, promptDlg, download, pickFile, safeFileName, store, plural, LOGO_SVG } from './util.js';
+import { esc, uid, fmt, toast, dialog, confirmDlg, promptDlg, download, pickFile, safeFileName, store, plural, LOGO_SVG } from './util.js';
 import { newBoard, mediaRefs, stats, normalize, finalReady, allClues } from './board.js';
 import { toPortable, fromPortable, copyRef, dropRef } from './media.js';
 import { exampleBoard } from './examples.js';
+import { listHistory, removeGame, clearHistory } from './history.js';
+
+const MODE_NAMES = { simple: 'Простой режим', buzzer: 'С кнопками' };
 
 export async function renderHome(root) {
   root.className = 'page-home';
@@ -25,9 +28,18 @@ export async function renderHome(root) {
       </div>
     </section>
     <section class="boards">
-      <h2>Мои игры</h2>
+      <div class="sec-head"><h2>Мои игры</h2><button class="btn small" data-a="exportAll">⬇ Скачать все</button></div>
       <div class="board-list"></div>
-      <p class="muted small note">Игры и картинки хранятся в этом браузере на этом устройстве. Чтобы перенести игру на другой компьютер или отдать другу — «⋯ → Скачать файл», а там «Загрузить из файла».</p>
+      <p class="muted small note">Игры и картинки хранятся в этом браузере на этом устройстве. Чтобы перенести их на другой компьютер или отдать другу — «⬇ Скачать», а там «Загрузить из файла».</p>
+    </section>
+    <section class="gallery">
+      <h2>Готовые игры</h2>
+      <p class="muted small">Возьми себе — и можно сразу играть или переделать под свою компанию.</p>
+      <div class="gallery-list"><div class="muted small">Загружаем…</div></div>
+    </section>
+    <section class="history">
+      <div class="sec-head"><h2>История игр</h2><button class="btn small ghost" data-a="clearHist" hidden>Очистить</button></div>
+      <div class="hist-list"></div>
     </section>
     <section class="how">
       <h2>Как играть</h2>
@@ -40,11 +52,40 @@ export async function renderHome(root) {
     <footer class="site-foot muted small">Плюх — бесплатная «Своя игра». Работает прямо в браузере, ничего не нужно устанавливать.</footer>`;
 
   const list = root.querySelector('.board-list');
-  async function draw() {
+  let gallery = [];
+
+  async function drawBoards() {
     const boards = await db.listBoards();
-    list.innerHTML = boards.length ? boards.map(cardHTML).join('') : `<div class="empty-card muted">Пока нет ни одной игры. Нажми «Новая игра»!</div>`;
+    list.innerHTML = boards.length ? boards.map(cardHTML).join('') : `<div class="empty-card muted">Пока нет ни одной игры. Нажми «Новая игра» или возьми готовую ниже.</div>`;
+    root.querySelector('[data-a=exportAll]').hidden = !boards.length;
+    drawGallery(boards);
   }
-  await draw();
+
+  function drawGallery(boards) {
+    if (!gallery.length) return;
+    const have = new Set(boards.map((b) => b.template).filter(Boolean));
+    root.querySelector('.gallery-list').innerHTML = gallery.map((g) => `
+      <div class="gcard">
+        <b>${esc(g.title)}</b>
+        <p class="muted small">${esc(g.about)}</p>
+        <button class="btn ${have.has(g.file) ? '' : 'primary'} small" data-a="take" data-file="${esc(g.file)}">${have.has(g.file) ? 'Взять ещё копию' : 'Взять себе'}</button>
+      </div>`).join('');
+  }
+
+  function drawHistory() {
+    const h = listHistory();
+    root.querySelector('[data-a=clearHist]').hidden = !h.length;
+    root.querySelector('.hist-list').innerHTML = h.length
+      ? h.map(histHTML).join('')
+      : `<div class="empty-card muted">Здесь появятся результаты сыгранных игр.</div>`;
+  }
+
+  await drawBoards();
+  drawHistory();
+  fetch('boards/index.json')
+    .then((r) => r.json())
+    .then(async (g) => { gallery = g; drawGallery(await db.listBoards()); })
+    .catch(() => { root.querySelector('.gallery').hidden = true; });
 
   root.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-a]');
@@ -63,16 +104,51 @@ export async function renderHome(root) {
         const f = await pickFile('.json,application/json');
         if (!f) return;
         try {
-          const b = await importBoard(f);
-          toast(`Загружено: ${b.title}`);
-          draw();
+          let data;
+          try { data = JSON.parse(await f.text()); } catch { throw new Error('Это не файл игры'); }
+          const added = await importData(data);
+          toast(added.length === 1 ? `Загружено: ${added[0].title}` : `Загружено игр: ${added.length}`);
+          drawBoards();
         } catch (err) {
           toast(err.message || 'Не получилось прочитать файл', 'err');
         }
         return;
       }
+      case 'take': {
+        btn.disabled = true;
+        try {
+          const data = await (await fetch(`boards/${btn.dataset.file}`)).json();
+          const [b] = await importData(data, btn.dataset.file);
+          toast(`«${b.title}» теперь в «Моих играх»`);
+          await drawBoards();
+          root.querySelector('.boards').scrollIntoView({ behavior: 'smooth' });
+        } catch {
+          toast('Не получилось загрузить игру', 'err');
+          btn.disabled = false;
+        }
+        return;
+      }
+      case 'exportAll': {
+        toast('Готовим файл…');
+        const boards = await db.listBoards();
+        const data = { app: 'plyukh', v: 1, boards: await Promise.all(boards.map(portable)) };
+        download(`plyukh-vse-igry-${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify(data)], { type: 'application/json' }));
+        return;
+      }
+      case 'clearHist':
+        if (await confirmDlg('Стереть всю историю игр?', 'Стереть', true)) { clearHistory(); drawHistory(); }
+        return;
+      case 'delHist':
+        removeGame(btn.closest('[data-hid]').dataset.hid);
+        drawHistory();
+        return;
       case 'play': location.hash = `#/play/${id}`; return;
       case 'edit': location.hash = `#/edit/${id}`; return;
+      case 'export': {
+        const b = await db.getBoard(id);
+        if (b) { toast('Готовим файл…'); await exportBoard(b); }
+        return;
+      }
       case 'more': return more(id);
     }
   });
@@ -84,32 +160,28 @@ export async function renderHome(root) {
       title: b.title,
       cls: 'menu-dlg',
       buttons: [
-        { label: 'Скачать файл', value: 'export' },
         { label: 'Сделать копию', value: 'dup' },
         { label: 'Удалить', value: 'del', cls: 'danger' },
         { label: 'Закрыть', value: null, cls: 'ghost' },
       ],
     });
-    if (r === 'export') {
-      toast('Готовим файл…');
-      await exportBoard(b);
-    }
     if (r === 'dup') {
       const copy = structuredClone(b);
       copy.id = uid('b');
       copy.title = b.title + ' (копия)';
       copy.createdAt = copy.updatedAt = Date.now();
+      delete copy.template;
       for (const { clue } of allClues(copy)) {
         clue.media = await copyRef(clue.media);
         clue.aMedia = await copyRef(clue.aMedia);
       }
       await db.putBoard(copy);
-      draw();
+      drawBoards();
     }
     if (r === 'del' && (await confirmDlg(`Удалить «${b.title}»? Это нельзя отменить.`, 'Удалить', true))) {
       mediaRefs(b).forEach(dropRef);
       await db.deleteBoardRecord(b.id);
-      draw();
+      drawBoards();
     }
   }
 }
@@ -130,31 +202,52 @@ function cardHTML(b) {
     <div class="bcard-actions">
       <button class="btn primary" data-a="play" ${s.done ? '' : 'disabled title="Сначала добавь вопросы"'}>Играть</button>
       <button class="btn" data-a="edit">Изменить</button>
+      <button class="btn" data-a="export" title="Скачать файл с игрой">⬇ Скачать</button>
       <button class="btn icon" data-a="more" title="Ещё">⋯</button>
     </div>
   </div>`;
 }
 
-export async function exportBoard(b) {
+function histHTML(h) {
+  const when = new Date(h.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const mins = h.startedAt ? Math.max(1, Math.round((h.at - h.startedAt) / 60000)) : 0;
+  const meta = [when, mins ? `${mins} мин` : '', MODE_NAMES[h.mode] || ''].filter(Boolean).join(' · ');
+  const players = h.players.map((p, i) => `<span class="hp ${i === 0 ? 'win' : ''}">${i === 0 ? '🏆 ' : ''}${esc(p.name)} <b class="${p.score < 0 ? 'neg' : ''}">${fmt(p.score)}</b></span>`).join('');
+  return `<div class="hist" data-hid="${esc(h.id)}">
+    <div class="hist-top"><b>${esc(h.board)}</b><span class="muted small">${meta}</span><button class="icon-btn small-x" data-a="delHist" title="Убрать из истории">×</button></div>
+    <div class="hist-players">${players || '<span class="muted small">без игроков</span>'}</div>
+  </div>`;
+}
+
+async function portable(b) {
   const copy = structuredClone(b);
   for (const { clue } of allClues(copy)) {
     clue.media = await toPortable(clue.media);
     clue.aMedia = await toPortable(clue.aMedia);
   }
-  const data = { app: 'plyukh', v: 1, board: copy };
+  return copy;
+}
+
+export async function exportBoard(b) {
+  const data = { app: 'plyukh', v: 1, board: await portable(b) };
   download(`${safeFileName(b.title)}.plyukh.json`, new Blob([JSON.stringify(data)], { type: 'application/json' }));
 }
 
-async function importBoard(file) {
-  let data;
-  try { data = JSON.parse(await file.text()); } catch { throw new Error('Это не файл игры'); }
-  if (data?.app !== 'plyukh' || !data.board) throw new Error('Это не файл игры Плюх');
-  const b = normalize(data.board);
-  b.id = uid('b');
-  for (const { clue } of allClues(b)) {
-    clue.media = await fromPortable(clue.media);
-    clue.aMedia = await fromPortable(clue.aMedia);
+// Accepts a single-board file ({board}) or a backup of several ({boards}). Returns the added boards.
+async function importData(data, template) {
+  if (data?.app !== 'plyukh' || !(data.board || Array.isArray(data.boards))) throw new Error('Это не файл игры Плюх');
+  const added = [];
+  for (const raw of data.board ? [data.board] : data.boards) {
+    const b = normalize(raw);
+    b.id = uid('b');
+    if (template) b.template = template;
+    for (const { clue } of allClues(b)) {
+      clue.media = await fromPortable(clue.media);
+      clue.aMedia = await fromPortable(clue.aMedia);
+    }
+    await db.putBoard(b);
+    added.push(b);
   }
-  await db.putBoard(b);
-  return b;
+  if (!added.length) throw new Error('В файле нет игр');
+  return added;
 }

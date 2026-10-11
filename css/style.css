@@ -266,7 +266,7 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .bcard .cats { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .9rem; }
 .bcard .meta { margin: 4px 0 0; font-size: .82rem; font-weight: 600; color: var(--teal); }
 @media (prefers-color-scheme: dark) { .bcard .meta { color: #6fc3c9; } }
-.bcard-actions { display: flex; gap: 8px; flex: none; }
+.bcard-actions { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
 .empty-card { padding: 30px; text-align: center; border: 2px dashed var(--line); border-radius: 14px; }
 .note { margin-top: 12px; }
 .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
@@ -275,6 +275,21 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .step p { margin: 0; color: var(--muted); font-size: .92rem; }
 .step-n { display: block; font-weight: 900; color: var(--orange); font-size: .85rem; margin-bottom: 6px; }
 .site-foot { text-align: center; margin-top: 40px; }
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 24px; margin-bottom: .4em; }
+.sec-head h2 { margin: 0; }
+.gallery h2, .history h2 { font-size: 1.4rem; margin-top: 24px; }
+.gallery-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.gcard { background: var(--card); border: 2px solid var(--line); border-radius: 14px; padding: 14px; display: flex; flex-direction: column; gap: 6px; }
+.gcard b { font-size: 1.08rem; }
+.gcard p { margin: 0; flex: 1; }
+.gcard .btn { align-self: flex-start; }
+.hist-list { display: flex; flex-direction: column; gap: 8px; max-height: 520px; overflow: auto; }
+.hist { background: var(--card); border: 2px solid var(--line); border-radius: 12px; padding: 10px 14px; }
+.hist-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.hist-top .small-x { margin-left: auto; font-size: 1rem; color: var(--muted); }
+.hist-players { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 4px; }
+.hp b { font-variant-numeric: tabular-nums; }
+.hp.win { font-weight: 700; }
 @media (max-width: 720px) {
   .steps { grid-template-columns: 1fr; }
   .bcard { flex-direction: column; align-items: stretch; }
