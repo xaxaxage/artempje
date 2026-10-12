@@ -46,6 +46,17 @@ export function toast(msg, kind = '') {
 
 export const dialogOpen = () => !!document.querySelector('.dlg-wrap');
 
+// A bar pinned to the top of the page that stays until the page is reloaded.
+export function banner(text, button) {
+  let b = document.getElementById('banner');
+  if (!b) { b = document.createElement('div'); b.id = 'banner'; document.body.prepend(b); }
+  b.innerHTML = `<span>${esc(text)}</span>${button ? `<button type="button" class="btn small primary">${esc(button.label)}</button>` : ''}`;
+  if (button) b.querySelector('button').onclick = button.onClick;
+}
+
+export const siteUpdatedBanner = () =>
+  banner('Сайт обновился — обнови страницу, чтобы всё работало. Игра сохранится.', { label: 'Обновить', onClick: () => location.reload() });
+
 // Generic modal. Each button: { label, value, cls }. value may be a function(wrap) -> value (undefined keeps the dialog open).
 export function dialog({ title = '', html = '', buttons = [{ label: 'OK', value: true, cls: 'primary' }], onMount, cls = '' } = {}) {
   return new Promise((resolve) => {

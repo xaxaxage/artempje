@@ -231,6 +231,24 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .toast.err { background: var(--red); color: #fff; }
 .toast.warn { background: var(--yellow); color: #1d1c19; }
 .toast.out { opacity: 0; transform: translateY(8px); }
+#banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 300;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 14px;
+  background: var(--yellow);
+  color: #1d1c19;
+  font-weight: 650;
+  text-align: center;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .25);
+}
 
 /* ---------- generic pages ---------- */
 .page { max-width: 1100px; margin: 0 auto; padding: 24px 16px 60px; }

@@ -1,8 +1,9 @@
 // Phone page: a player's buzzer, or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, LOGO_SVG } from './util.js';
-import { Client, LocalLink } from './net.js';
-import { controlsHTML, bindControls, setHTML } from './controls.js';
-import { MediaReceiver } from './mediasync.js';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, LOGO_SVG } from './util.js?v=1791765324024';
+import { VERSION } from './version.js?v=1791765324024';
+import { Client, LocalLink } from './net.js?v=1791765324024';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791765324024';
+import { MediaReceiver } from './mediasync.js?v=1791765324024';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -103,7 +104,7 @@ function connect() {
   view = null;
   app.innerHTML = `<div class="ph-center">${logo}<div class="connecting"><div class="spinner"></div>${local ? 'Подключаемся к экрану игры…' : `Подключаемся к комнате ${esc(code)}…`}</div></div>`;
   const handlers = {
-    onOpen: () => client.send({ t: 'hello', role, pid, name, key: hostKey, have: receiver.keys() }),
+    onOpen: () => client.send({ t: 'hello', role, pid, name, key: hostKey, have: receiver.keys(), v: VERSION }),
     onData: onMsg,
     onStatus: (s) => { app.dataset.net = s; },
     onNoRoom: () => { client = null; codeScreen(`Комната ${code} не найдена. Проверь код на экране`); },
@@ -115,7 +116,7 @@ function connect() {
 
 function onMsg(d) {
   if (receiver.handle(d)) return;
-  if (d.t === 'welcome') { pid = d.pid; return; }
+  if (d.t === 'welcome') { pid = d.pid; checkVersion(d.v); return; }
   if (d.t === 'denied') { client.stop(); return messageScreen('Ссылка пульта устарела', 'Открой новую ссылку из меню игры на экране ведущего'); }
   if (d.t === 'kicked') { client.stop(); store.del('plyukh-pid-' + code); return messageScreen('Ты вне игры', 'Ведущий убрал тебя из этой комнаты', true); }
   if (d.t !== 'state' && d.t !== 'hstate') return;
@@ -126,6 +127,26 @@ function onMsg(d) {
   const remain = c?.remainMs || d.fin?.remainMs || 0;
   deadline = remain > 0 ? Date.now() + remain : 0;
   render();
+}
+
+// Host and phone must run the same release, or features like clue media silently go missing.
+function checkVersion(hostV) {
+  if (hostV === VERSION) return;
+  if (!hostV || hostV < VERSION) {
+    banner('Ведущему нужно обновить страницу игры (F5) — иначе картинки и видео не придут на телефоны.');
+    return;
+  }
+  // This page came from the browser cache and is older than the host's: load it fresh, once.
+  const once = 'plyukh-reloaded-' + hostV;
+  let tried = false;
+  try { tried = !!sessionStorage.getItem(once); sessionStorage.setItem(once, '1'); } catch {}
+  if (tried) {
+    banner('На сайте новая версия — обнови страницу.', { label: 'Обновить', onClick: () => location.reload() });
+    return;
+  }
+  const u = new URL(location.href);
+  u.searchParams.set('_', Date.now());
+  location.replace(u.href);
 }
 
 // ---------- player view ----------

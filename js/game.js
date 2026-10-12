@@ -1,14 +1,15 @@
 // The host screen: setup, lobby, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js';
-import { $, esc, nl2br, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, LOGO_SVG } from './util.js';
-import { filled, finalReady, roundPlayable } from './board.js';
-import { mediaEl } from './media.js';
-import { play as sfx, sound, unlock } from './sound.js';
-import { Host, errText, hostChannelName } from './net.js';
-import { controlsHTML, bindControls, setHTML } from './controls.js';
-import { saveGame } from './history.js';
-import { MediaSender, describe } from './mediasync.js';
+import * as db from './db.js?v=1791765324024';
+import { $, esc, nl2br, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, LOGO_SVG, siteUpdatedBanner } from './util.js?v=1791765324024';
+import { filled, finalReady, roundPlayable } from './board.js?v=1791765324024';
+import { mediaEl } from './media.js?v=1791765324024';
+import { play as sfx, sound, unlock } from './sound.js?v=1791765324024';
+import { Host, errText, hostChannelName } from './net.js?v=1791765324024';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791765324024';
+import { saveGame } from './history.js?v=1791765324024';
+import { MediaSender, describe } from './mediasync.js?v=1791765324024';
+import { VERSION } from './version.js?v=1791765324024';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const SAVE_KEY = 'plyukh-game';
@@ -407,7 +408,9 @@ export async function startPlay(root, boardId) {
     conn._pid = p.id;
     conns.set(p.id, conn);
     if (Array.isArray(d.have)) sender?.have(conn, d.have);
-    net.send(conn, { t: 'welcome', pid: p.id });
+    // A phone running a newer release means this page is stale.
+    if (d.v && d.v > VERSION) siteUpdatedBanner();
+    net.send(conn, { t: 'welcome', pid: p.id, v: VERSION });
     commit();
   }
 

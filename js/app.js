@@ -1,7 +1,8 @@
-import { renderHome } from './home.js';
-import { renderEditor } from './editor.js';
-import { startPlay } from './game.js';
-import { esc } from './util.js';
+import { renderHome } from './home.js?v=1791765324024';
+import { renderEditor } from './editor.js?v=1791765324024';
+import { startPlay } from './game.js?v=1791765324024';
+import { esc, siteUpdatedBanner } from './util.js?v=1791765324024';
+import { VERSION } from './version.js?v=1791765324024';
 
 const host = document.getElementById('app');
 let cleanup = null;
@@ -31,3 +32,9 @@ async function route() {
 
 window.addEventListener('hashchange', route);
 route();
+
+// A tab opened before the last deploy keeps running old code: offer a reload.
+fetch('version.json', { cache: 'no-store' })
+  .then((r) => (r.ok ? r.json() : null))
+  .then((j) => { if (j?.v && j.v > VERSION) siteUpdatedBanner(); })
+  .catch(() => {});
