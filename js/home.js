@@ -1,9 +1,9 @@
-import * as db from './db.js?v=1791789810288';
-import { esc, uid, fmt, toast, dialog, confirmDlg, promptDlg, download, pickFile, safeFileName, store, plural, LOGO_SVG } from './util.js?v=1791789810288';
-import { newBoard, mediaRefs, stats, normalize, finalReady, allClues } from './board.js?v=1791789810288';
-import { toPortable, fromPortable, copyRef, dropRef } from './media.js?v=1791789810288';
-import { exampleBoard } from './examples.js?v=1791789810288';
-import { listHistory, removeGame, clearHistory } from './history.js?v=1791789810288';
+import * as db from './db.js?v=1791795754282';
+import { esc, uid, fmt, toast, dialog, confirmDlg, promptDlg, download, pickFile, safeFileName, store, plural, LOGO_SVG } from './util.js?v=1791795754282';
+import { newBoard, mediaRefs, stats, normalize, finalReady, allClues } from './board.js?v=1791795754282';
+import { toPortable, fromPortable, copyRef, dropRef } from './media.js?v=1791795754282';
+import { exampleBoard } from './examples.js?v=1791795754282';
+import { listHistory, removeGame, clearHistory } from './history.js?v=1791795754282';
 
 const MODE_NAMES = { simple: 'Простой режим', buzzer: 'С кнопками' };
 
@@ -21,6 +21,7 @@ export async function renderHome(root) {
         <button class="nav-link" data-a="goto" data-sec="boards">Мои игры</button>
         <button class="nav-link" data-a="goto" data-sec="gallery">Готовые игры</button>
         <button class="nav-link" data-a="goto" data-sec="history">История</button>
+        <a class="nav-link" href="test/" title="Ведущий и игроки на одном экране — проверить игру одному">🧪 Тест-стенд</a>
         <a class="btn small" href="join/">Войти в игру по коду</a>
       </nav>
     </header>

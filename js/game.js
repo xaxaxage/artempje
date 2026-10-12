@@ -1,20 +1,22 @@
-// The host screen: setup, lobby, board, clues, rounds, final, results.
+// The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1791789810288';
-import { $, esc, nl2br, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, LOGO_SVG, siteUpdatedBanner } from './util.js?v=1791789810288';
-import { filled, finalReady, roundPlayable } from './board.js?v=1791789810288';
-import { mediaEl } from './media.js?v=1791789810288';
-import { play as sfx, sound, unlock } from './sound.js?v=1791789810288';
-import { Host, errText, hostChannelName } from './net.js?v=1791789810288';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791789810288';
-import { saveGame } from './history.js?v=1791789810288';
-import { MediaSender, describe } from './mediasync.js?v=1791789810288';
-import { VERSION } from './version.js?v=1791789810288';
+import * as db from './db.js?v=1791795754282';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1791795754282';
+import { filled, finalReady, roundPlayable } from './board.js?v=1791795754282';
+import { mediaEl } from './media.js?v=1791795754282';
+import { play as sfx, sound, unlock } from './sound.js?v=1791795754282';
+import { Host, errText, hostChannelName } from './net.js?v=1791795754282';
+import { setHTML } from './controls.js?v=1791795754282';
+import { saveGame } from './history.js?v=1791795754282';
+import { MediaSender, describe } from './mediasync.js?v=1791795754282';
+import { VERSION } from './version.js?v=1791795754282';
+import { createScreen } from './gameui.js?v=1791795754282';
 
 const SETTINGS_KEY = 'plyukh-settings';
-const SAVE_KEY = 'plyukh-game';
-const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, hostAnswer: false };
+const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all' };
 const BUZZ_WINDOW_MS = 220;
+const TEAM_COLORS = ['#df6e5c', '#5b8def', '#4fae8f', '#e0a43a', '#a77fd6', '#4fb7c9', '#e07ab0', '#8a9a5b'];
+const TEAM_NAMES = ['Красные', 'Синие', 'Зелёные', 'Жёлтые', 'Фиолетовые', 'Голубые', 'Розовые', 'Оливковые'];
 
 export async function startPlay(root, boardId) {
   const board = await db.getBoard(boardId);
@@ -22,6 +24,10 @@ export async function startPlay(root, boardId) {
     root.innerHTML = `<div class="page center"><h1>Игра не найдена</h1><a class="btn primary" href="#/">На главную</a></div>`;
     return;
   }
+
+  // Test bench (test/): the host runs in a frame next to fake players.
+  const autotest = new URLSearchParams(location.search).has('autotest');
+  const SAVE_KEY = autotest ? 'plyukh-game-test' : 'plyukh-game';
 
   const settings = { ...DEFAULTS, ...store.get(SETTINGS_KEY, {}) };
   sound.on = settings.sound;
@@ -35,25 +41,58 @@ export async function startPlay(root, boardId) {
   let buzzTimer = null;
   let hist = [];
   let mounted = null;
+  let screen = null; // the game screen (gameui)
   let destroyed = false;
 
   const R = () => board.rounds[S.round];
   const player = (id) => S.players.find((p) => p.id === id);
+  const team = (id) => S.teams.find((t) => t.id === id);
+  const teamOf = (pid) => team(player(pid)?.teamId);
+  const members = (tid) => S.players.filter((p) => p.teamId === tid);
   const keyOf = (r, c, q) => `${r}:${c}:${q}`;
   const clueAt = (c) => R().categories[c.c].clues[c.q];
   const worth = () => (S.clue.dd ? S.clue.wager || 0 : S.clue.value);
   const firstRound = () => board.rounds.findIndex(roundPlayable);
-  const standings = () => [...S.players].sort((a, b) => b.score - a.score);
+  const standings = () => [...S.teams].sort((a, b) => b.score - a.score);
   const saveSettings = () => store.set(SETTINGS_KEY, settings);
-  const joinUrl = () => new URL(`join/?r=${S.code}`, location.href.split('#')[0]).href;
-  const remoteUrl = () => new URL(`join/?r=${S.code}&k=${S.hostKey}`, location.href.split('#')[0]).href;
+  const pageUrl = () => location.href.split('#')[0].split('?')[0];
+  const joinUrl = () => new URL(`join/?r=${S.code}`, pageUrl()).href;
+  const remoteUrl = () => new URL(`join/?r=${S.code}&k=${S.hostKey}`, pageUrl()).href;
   const usesPhones = () => S.mode === 'buzzer';
+  const solo = () => S.teamMode === 'solo';
+  const step = () => Math.min(...R().values.filter((v) => v > 0), 100) || 100;
+  // A team can buzz if someone of it is online, or if it plays without phones (the host buzzes for it).
+  const canPlay = (t) => { const m = members(t.id).filter((p) => p.phone); return !m.length || m.some((p) => p.online); };
+  const withPhones = (t) => members(t.id).some((p) => p.phone && p.online);
 
   function freshState(mode = 'buzzer') {
     return {
-      v: 1, phase: 'setup', mode, players: [], kicked: [], round: 0, used: {}, dds: {},
+      v: 2, phase: 'setup', mode, teamMode: 'teams', teams: [], players: [], kicked: [], round: 0, used: {}, dds: {},
       picker: null, clue: null, fin: null, code: null, hostKey: uid().slice(0, 10), openSeq: 0,
     };
+  }
+
+  function newTeam(name) {
+    const used = new Set(S.teams.map((t) => t.color));
+    const color = TEAM_COLORS.find((c) => !used.has(c)) || TEAM_COLORS[S.teams.length % TEAM_COLORS.length];
+    const t = { id: uid('t'), name: (name || TEAM_NAMES[S.teams.length % TEAM_NAMES.length]).slice(0, 24), color, score: 0 };
+    S.teams.push(t);
+    return t;
+  }
+
+  // In "каждый сам за себя" every player is a team of one.
+  function soloTeam(p) {
+    let t = team(p.teamId);
+    if (!t) { t = newTeam(p.name); p.teamId = t.id; }
+    return t;
+  }
+
+  function autoTeam(p) {
+    if (solo()) return soloTeam(p);
+    if (!S.teams.length) { newTeam(); newTeam(); }
+    const t = [...S.teams].sort((a, b) => members(a.id).length - members(b.id).length)[0];
+    p.teamId = t.id;
+    return t;
   }
 
   // ---------- persistence & undo ----------
@@ -76,17 +115,17 @@ export async function startPlay(root, boardId) {
   }
 
   // ---------- scoring helpers ----------
-  function addScore(pid, delta) {
-    const p = player(pid);
-    if (p) p.score += delta;
+  function addScore(tid, delta) {
+    const t = team(tid);
+    if (t) t.score += delta;
   }
-  function ddRange(p) {
+  function ddRange(t) {
     const top = Math.max(...R().values);
-    return { min: 0, max: Math.max(p?.score || 0, top) };
+    return { min: 0, max: Math.max(t?.score || 0, top) };
   }
   function eligible() {
     const c = S.clue;
-    return S.players.filter((p) => !c.tried.includes(p.id) && (p.online || !p.phone));
+    return S.teams.filter((t) => !c.tried.includes(t.id) && canPlay(t));
   }
   function roundDone() {
     return R().categories.every((cat, ci) => cat.clues.every((cl, qi) => !filled(cl) || S.used[keyOf(S.round, ci, qi)]));
@@ -131,11 +170,11 @@ export async function startPlay(root, boardId) {
     c.openId = ++S.openSeq;
     c.deadline = settings.timer ? Date.now() + settings.timer * 1000 : 0;
   }
-  function setBuzzed(pid) {
+  function setBuzzed(tid, pid = null) {
     const c = S.clue;
     clearBuzz();
     c.stage = 'buzzed';
-    c.buzzed = pid;
+    c.buzzed = { team: tid, pid };
     c.ansDeadline = settings.timer ? Date.now() + Math.max(5, settings.timer) * 1000 : 0;
     c.ansBeeped = false;
     sfx('buzz');
@@ -151,8 +190,10 @@ export async function startPlay(root, boardId) {
     S.used = {};
     S.clue = null;
     S.fin = null;
-    for (const p of S.players) p.score = 0;
-    S.picker = S.players.length ? S.players[Math.floor(Math.random() * S.players.length)].id : null;
+    for (const t of S.teams) t.score = 0;
+    const playing = S.teams.filter((t) => members(t.id).length || !usesPhones());
+    const pool = playing.length ? playing : S.teams;
+    S.picker = pool.length ? pool[Math.floor(Math.random() * pool.length)].id : null;
     S.gameId = uid('g');
     S.startedAt = Date.now();
     S.endedAt = 0;
@@ -168,11 +209,11 @@ export async function startPlay(root, boardId) {
       board: board.title,
       boardId: board.id,
       mode: S.mode,
-      players: standings().map((p) => ({ name: p.name, score: p.score })),
+      players: standings().map((t) => ({ name: solo() ? t.name : `${t.name}${members(t.id).length ? ` (${members(t.id).map((p) => p.name).join(', ')})` : ''}`, score: t.score })),
     });
   }
 
-  // ---------- actions (from the TV screen, keyboard or the host's phone) ----------
+  // ---------- actions (from the screen, keyboard, the host's phone or the host window) ----------
   const A = {
     pick({ c, q }) {
       if (S.phase !== 'board') return;
@@ -182,20 +223,20 @@ export async function startPlay(root, boardId) {
       const dd = !!S.dds[key] && settings.dd;
       S.clue = { c, q, key, value: R().values[q], dd, stage: 'reading', tried: [], buzzed: null, result: null, openId: 0, deadline: 0 };
       if (dd) {
-        Object.assign(S.clue, { stage: 'ddIntro', ddPlayer: player(S.picker) ? S.picker : S.players[0]?.id || null, wager: null });
+        Object.assign(S.clue, { stage: 'ddIntro', ddTeam: team(S.picker) ? S.picker : S.teams[0]?.id || null, wager: null });
         sfx('dd');
       }
       S.phase = 'clue';
     },
-    ddPlayer({ pid }) {
-      if (S.clue?.stage === 'ddIntro' && player(pid)) S.clue.ddPlayer = pid;
+    ddTeam({ team: tid }) {
+      if (S.clue?.stage === 'ddIntro' && team(tid)) S.clue.ddTeam = tid;
     },
     ddWager({ amount }) {
       const c = S.clue;
       if (c?.stage !== 'ddIntro') return;
-      const p = player(c.ddPlayer);
-      if (!p) return toast('Сначала выбери, кто отвечает');
-      const { min, max } = ddRange(p);
+      const t = team(c.ddTeam);
+      if (!t) return toast('Сначала выбери, кто отвечает');
+      const { min, max } = ddRange(t);
       c.wager = clamp(Math.round(+amount || 0), min, max);
       c.stage = 'reading';
     },
@@ -205,37 +246,37 @@ export async function startPlay(root, boardId) {
       startOpen();
       sfx('open');
     },
-    correct({ pid } = {}) {
+    correct({ team: tid } = {}) {
       const c = S.clue;
       if (!c || !['reading', 'open', 'buzzed'].includes(c.stage)) return;
-      pid = pid ?? (c.dd ? c.ddPlayer : c.buzzed);
-      if (!player(pid) || c.tried.includes(pid)) return;
+      tid = tid ?? (c.dd ? c.ddTeam : c.buzzed?.team);
+      if (!team(tid) || c.tried.includes(tid)) return;
       snapshot();
       const v = worth();
-      addScore(pid, v);
-      c.result = { pid, delta: v };
+      addScore(tid, v);
+      c.result = { team: tid, pid: c.buzzed?.pid || null, delta: v };
       c.stage = 'answer';
       c.buzzed = null;
-      S.picker = pid;
+      S.picker = tid;
       clearBuzz();
       sfx('correct');
     },
-    wrong({ pid } = {}) {
+    wrong({ team: tid } = {}) {
       const c = S.clue;
       if (!c || !['reading', 'open', 'buzzed'].includes(c.stage)) return;
-      pid = pid ?? (c.dd ? c.ddPlayer : c.buzzed);
-      if (!player(pid) || c.tried.includes(pid)) return;
+      tid = tid ?? (c.dd ? c.ddTeam : c.buzzed?.team);
+      if (!team(tid) || c.tried.includes(tid)) return;
       snapshot();
       const v = worth();
-      addScore(pid, -v);
-      c.tried.push(pid);
+      addScore(tid, -v);
+      c.tried.push(tid);
       sfx('wrong');
-      if (c.dd) { c.result = { pid, delta: -v }; c.stage = 'answer'; return; }
+      if (c.dd) { c.result = { team: tid, delta: -v }; c.stage = 'answer'; return; }
       if (usesPhones()) {
         c.buzzed = null;
         if (eligible().length) startOpen();
         else c.stage = 'answer';
-      } else if (S.players.every((p) => c.tried.includes(p.id))) {
+      } else if (S.teams.every((t) => c.tried.includes(t.id))) {
         c.stage = 'answer';
       }
     },
@@ -246,8 +287,8 @@ export async function startPlay(root, boardId) {
       c.buzzed = null;
       clearBuzz();
     },
-    manualBuzz({ pid }) {
-      if (S.clue?.stage === 'open' && eligible().some((p) => p.id === pid)) setBuzzed(pid);
+    manualBuzz({ team: tid }) {
+      if (S.clue?.stage === 'open' && eligible().some((t) => t.id === tid)) setBuzzed(tid);
     },
     cont() {
       if (S.clue?.stage === 'answer') finishClue();
@@ -258,19 +299,19 @@ export async function startPlay(root, boardId) {
       if (c.tried.length || c.result || c.stage === 'answer') finishClue();
       else { S.clue = null; S.phase = 'board'; clearBuzz(); }
     },
-    adj({ pid, delta }) {
-      if (!player(pid)) return;
+    adj({ team: tid, delta }) {
+      if (!team(tid)) return;
       snapshot();
-      addScore(pid, Math.round(+delta || 0));
+      addScore(tid, Math.round(+delta || 0));
     },
-    setScore({ pid, value }) {
-      const p = player(pid);
-      if (!p) return;
+    setScore({ team: tid, value }) {
+      const t = team(tid);
+      if (!t) return;
       snapshot();
-      p.score = Math.round(+value || 0);
+      t.score = Math.round(+value || 0);
     },
-    setPicker({ pid }) {
-      if (player(pid)) S.picker = pid;
+    setPicker({ team: tid }) {
+      if (team(tid)) S.picker = tid;
     },
     endRound() {
       if (!['board', 'clue'].includes(S.phase)) return;
@@ -287,7 +328,7 @@ export async function startPlay(root, boardId) {
         S.round = nx;
         placeDDs();
         S.phase = 'board';
-      } else if (finalReady(board) && S.players.length) {
+      } else if (finalReady(board) && S.teams.length) {
         S.phase = 'final';
         S.fin = { stage: 'wager', wagers: {}, answers: {}, shown: {}, judged: {}, deadline: 0, showAnswer: false, timeUp: false };
       } else {
@@ -295,40 +336,40 @@ export async function startPlay(root, boardId) {
         sfx('win');
       }
     },
-    finWager({ pid, amount }) {
+    finWager({ team: tid, amount }) {
       const f = S.fin;
-      const p = player(pid);
-      if (S.phase !== 'final' || f.stage !== 'wager' || !p) return;
-      f.wagers[pid] = clamp(Math.round(+amount || 0), 0, Math.max(0, p.score));
+      const t = team(tid);
+      if (S.phase !== 'final' || f.stage !== 'wager' || !t) return;
+      f.wagers[tid] = clamp(Math.round(+amount || 0), 0, Math.max(0, t.score));
     },
     finClue() {
       if (S.phase !== 'final' || S.fin.stage !== 'wager') return;
       snapshot();
-      for (const p of S.players) S.fin.wagers[p.id] ??= 0;
+      for (const t of S.teams) S.fin.wagers[t.id] ??= 0;
       S.fin.stage = 'clue';
       S.fin.deadline = settings.finalTimer ? Date.now() + settings.finalTimer * 1000 : 0;
       S.fin.timeUp = false;
     },
-    finAnswer({ pid, text }) {
-      if (S.phase !== 'final' || S.fin.stage !== 'clue' || !player(pid)) return;
-      S.fin.answers[pid] = String(text || '').slice(0, 300);
+    finAnswer({ team: tid, text }) {
+      if (S.phase !== 'final' || S.fin.stage !== 'clue' || !team(tid)) return;
+      S.fin.answers[tid] = String(text || '').slice(0, 300);
     },
     finReveal() {
       if (S.phase !== 'final' || S.fin.stage !== 'clue') return;
       snapshot();
       S.fin.stage = 'reveal';
     },
-    finShow({ pid }) {
-      if (S.fin?.stage === 'reveal') S.fin.shown[pid] = true;
+    finShow({ team: tid }) {
+      if (S.fin?.stage === 'reveal') S.fin.shown[tid] = true;
     },
-    finJudge({ pid, ok }) {
+    finJudge({ team: tid, ok }) {
       const f = S.fin;
-      if (f?.stage !== 'reveal' || !player(pid) || f.judged[pid] != null) return;
+      if (f?.stage !== 'reveal' || !team(tid) || f.judged[tid] != null) return;
       snapshot();
-      f.shown[pid] = true;
-      f.judged[pid] = !!ok;
-      const w = f.wagers[pid] || 0;
-      addScore(pid, ok ? w : -w);
+      f.shown[tid] = true;
+      f.judged[tid] = !!ok;
+      const w = f.wagers[tid] || 0;
+      addScore(tid, ok ? w : -w);
       sfx(ok ? 'correct' : 'wrong');
     },
     finCorrect() {
@@ -358,14 +399,22 @@ export async function startPlay(root, boardId) {
   function onData(conn, d) {
     if (d.t === 'hello') return hello(conn, d);
     const pid = conn._pid;
+    const p = player(pid);
     switch (d.t) {
       case 'buzz': return onBuzz(pid, d);
       case 'early': return onEarly(pid);
-      case 'wager':
-        if (S.clue?.stage === 'ddIntro' && S.clue.ddPlayer === pid) act('ddWager', { amount: d.amount });
+      case 'pick':
+        // Players of the choosing team pick on their own screens.
+        if (p && S.phase === 'board' && p.teamId === S.picker) act('pick', { c: d.c, q: d.q });
         return;
-      case 'fwager': return act('finWager', { pid, amount: d.amount });
-      case 'fanswer': return act('finAnswer', { pid, text: d.text });
+      case 'team':
+        if (p && team(d.team) && (S.phase === 'lobby' || !team(p.teamId)) && !solo()) { p.teamId = d.team; commit(); }
+        return;
+      case 'wager':
+        if (p && S.clue?.stage === 'ddIntro' && S.clue.ddTeam === p.teamId) act('ddWager', { amount: d.amount });
+        return;
+      case 'fwager': if (p) act('finWager', { team: p.teamId, amount: d.amount }); return;
+      case 'fanswer': if (p) act('finAnswer', { team: p.teamId, text: d.text }); return;
       case 'act':
         if (conn._role === 'host' && A[d.a]) act(d.a, d.args || {});
         return;
@@ -393,16 +442,19 @@ export async function startPlay(root, boardId) {
     const name = String(d.name || 'Игрок').trim().slice(0, 20) || 'Игрок';
     let p = player(d.pid);
     if (!p) {
-      p = { id: d.pid || uid('p'), name, score: 0, phone: true, online: true };
+      p = { id: d.pid || uid('p'), name, teamId: null, phone: true, online: true };
       S.players.push(p);
-      if (!player(S.picker) && !['setup', 'lobby'].includes(S.phase)) S.picker = p.id;
+      if (solo() || d.auto) autoTeam(p);
       sfx('join');
       if (S.phase !== 'lobby') toast(`${p.name} присоединяется`);
     } else {
       p.online = true;
       p.name = name;
       p.phone = true;
+      if (solo()) { const t = soloTeam(p); t.name = name; }
+      else if (!team(p.teamId) && d.auto) autoTeam(p);
     }
+    if (!team(S.picker) && !['setup', 'lobby'].includes(S.phase)) S.picker = p.teamId;
     const old = conns.get(p.id);
     if (old && old !== conn) { old._replaced = true; try { old.close(); } catch {} }
     conn._pid = p.id;
@@ -425,18 +477,19 @@ export async function startPlay(root, boardId) {
 
   function onBuzz(pid, { oid, rt }) {
     const c = S.clue;
-    if (!c || c.stage !== 'open' || oid !== c.openId || !player(pid)) return;
-    if (c.tried.includes(pid) || (locks[pid] || 0) > Date.now()) return;
-    if (buzzCands.some((b) => b.pid === pid)) return;
+    const t = teamOf(pid);
+    if (!c || !t || c.stage !== 'open' || oid !== c.openId) return;
+    if (c.tried.includes(t.id) || (locks[pid] || 0) > Date.now()) return;
+    if (buzzCands.some((b) => b.team === t.id)) return;
     // Phones report their reaction time, so a slower connection doesn't lose a fair race.
-    buzzCands.push({ pid, rt: clamp(+rt || 0, 0, 60000) });
+    buzzCands.push({ pid, team: t.id, rt: clamp(+rt || 0, 0, 60000) });
     if (!buzzTimer) {
       buzzTimer = setTimeout(() => {
         buzzTimer = null;
         const best = [...buzzCands].sort((a, b) => a.rt - b.rt)[0];
         buzzCands = [];
         if (best && S.clue?.stage === 'open' && S.clue.openId === oid) {
-          setBuzzed(best.pid);
+          setBuzzed(best.team, best.pid);
           commit();
         }
       }, BUZZ_WINDOW_MS);
@@ -450,51 +503,168 @@ export async function startPlay(root, boardId) {
   }
 
   function kick(pid) {
+    const p = player(pid);
     const conn = conns.get(pid);
     if (conn) { net.send(conn, { t: 'kicked' }); setTimeout(() => { try { conn.close(); } catch {} }, 300); conns.delete(pid); }
     if (!S.kicked.includes(pid)) S.kicked.push(pid);
-    S.players = S.players.filter((p) => p.id !== pid);
-    if (S.picker === pid) S.picker = S.players[0]?.id || null;
+    S.players = S.players.filter((x) => x.id !== pid);
+    if (p && solo() && !members(p.teamId).length) removeTeam(p.teamId);
     commit();
   }
 
-  function playerView(pid) {
-    const p = player(pid);
-    const v = {
-      t: 'state', phase: S.phase, title: board.title, mode: S.mode,
-      you: p ? { id: p.id, name: p.name, score: p.score } : null,
-      picker: player(S.picker)?.name || null, pickerMe: S.picker === pid,
-    };
+  function removeTeam(tid) {
+    S.teams = S.teams.filter((t) => t.id !== tid);
+    for (const p of S.players) if (p.teamId === tid) p.teamId = null;
+    if (S.picker === tid) S.picker = S.teams[0]?.id || null;
+  }
+
+  // ---------- what each screen shows ----------
+  // A file can be kept off the phones with its own checkbox in the editor.
+  const forPhones = (ref) => (ref && ref.phone !== false ? ref : null);
+  // Answer media replaces the question's once revealed; if it's hidden, the question's stays.
+  const phonePick = (qRef, aRef, revealed) => (revealed && forPhones(aRef)) || forPhones(qRef);
+  const hostPick = (qRef, aRef, revealed) => (revealed && aRef) || qRef;
+  const tinfo = (tid) => { const t = team(tid); return t ? { name: t.name, color: t.color } : null; };
+
+  // Board/question/final part of the screen; `pid` is a player, or null for the host.
+  function viewFor(pid) {
+    const host = pid == null;
+    const r = R();
     const c = S.clue;
-    if (S.phase === 'clue' && c) {
-      v.clue = {
-        cat: R().categories[c.c].name, value: c.value, dd: c.dd, stage: c.stage, openId: c.openId,
-        remainMs: c.stage === 'open' && c.deadline ? c.deadline - Date.now() : 0,
-        buzzedName: player(c.buzzed)?.name || null, buzzedMe: c.buzzed === pid,
-        triedMe: c.tried.includes(pid), lockedMs: Math.max(0, (locks[pid] || 0) - Date.now()),
-        result: c.result ? { name: player(c.result.pid)?.name || '', delta: c.result.delta, me: c.result.pid === pid } : null,
-        ddMe: c.dd && c.ddPlayer === pid, ddName: c.dd ? player(c.ddPlayer)?.name || null : null, wager: c.wager,
-        wagerReq: c.stage === 'ddIntro' && c.ddPlayer === pid && p ? ddRange(p) : null,
+    if (S.phase === 'lobby') return { v: 'lobby', head: 'Ждём начала игры…', sub: 'Как только ведущий начнёт, здесь появится доска.' };
+    if (S.phase === 'board' || (S.phase === 'clue' && !c)) {
+      const mine = !host && player(pid)?.teamId === S.picker;
+      return {
+        v: 'board', cats: r.categories.map((x) => x.name), values: r.values,
+        open: r.categories.map((cat, ci) => cat.clues.map((cl, qi) => filled(cl) && !S.used[keyOf(S.round, ci, qi)])),
+        canPick: host || mine, mine,
+        hint: host ? '' : mine ? 'Ваша команда выбирает — нажми на клетку' : team(S.picker) ? `Выбирают ${team(S.picker).name}` : '',
       };
-      if (c.stage !== 'ddIntro') {
-        const cl = clueAt(c);
-        const ans = c.stage === 'answer';
-        v.clue.show = phoneShow(phonePick(cl.media, cl.aMedia, ans), cl.q, ans ? cl.a : '');
-      }
     }
-    if (S.phase === 'final' && S.fin) {
+    if (S.phase === 'clue') {
+      const cl = clueAt(c);
+      const cat = r.categories[c.c].name;
+      if (c.stage === 'ddIntro') {
+        return { v: 'dd', key: c.key, cat, team: tinfo(c.ddTeam), text: '{team} делают ставку' };
+      }
+      const revealed = c.stage === 'answer';
+      const ref = host ? hostPick(cl.media, cl.aMedia, revealed) : settings.phoneMedia ? phonePick(cl.media, cl.aMedia, revealed) : null;
+      const which = ref && ref === cl.aMedia ? 'a' : 'q';
+      const v = {
+        v: 'clue', key: c.key, cat,
+        label: c.dd ? (c.wager != null ? `ставка ${fmt(c.wager)}` : 'вопрос-ставка') : fmt(c.value),
+        text: host || settings.phoneText ? cl.q : 'Вопрос — на экране ведущего',
+        media: ref ? (host ? ref : describe(ref)) : null, mediaKey: ref ? `${c.key}:${which}` : '',
+        autoplay: settings.mediaSync === 'all', stage: c.stage,
+      };
+      if (c.stage === 'open' && c.deadline) v.timer = { deadline: c.deadline, total: settings.timer * 1000 };
+      if (c.stage === 'buzzed' && c.ansDeadline) v.timer = { deadline: c.ansDeadline, total: Math.max(5, settings.timer) * 1000 };
+      if (c.stage === 'reading') v.status = { text: c.dd ? `Отвечают {team} · ставка ${fmt(c.wager)}` : usesPhones() ? 'Кнопки закрыты — слушайте вопрос' : 'Отвечайте вслух', team: tinfo(c.ddTeam) };
+      if (c.stage === 'open') v.status = { text: `Кнопки открыты — жмите!${c.tried.length ? ` Мимо: ${c.tried.map((id) => team(id)?.name).join(', ')}` : ''}` };
+      if (c.stage === 'buzzed') v.status = { text: `Отвечают {team}${player(c.buzzed.pid) ? ` — ${player(c.buzzed.pid).name}` : ''}`, team: tinfo(c.buzzed.team) };
+      if (revealed && (host || settings.phoneText)) {
+        const res = c.result;
+        v.answer = {
+          text: cl.a,
+          result: res ? { text: `{team} ${signed(res.delta)}`, team: tinfo(res.team), cls: res.delta >= 0 ? 'good' : 'bad' } : { text: 'Никто не ответил' },
+        };
+      }
+      return v;
+    }
+    if (S.phase === 'roundEnd') return { v: 'roundEnd', key: S.round, head: `${r.name} — всё!`, standings: standingsFor(pid) };
+    if (S.phase === 'final') {
       const f = S.fin;
       const fc = board.final;
-      v.fin = {
-        stage: f.stage, cat: fc.category,
-        max: Math.max(0, p?.score || 0), wager: f.wagers[pid] ?? null, answer: f.answers[pid] ?? null,
-        remainMs: f.stage === 'clue' && f.deadline ? f.deadline - Date.now() : 0,
-        judged: f.judged[pid] ?? null,
+      const chips = (src) => S.teams.map((t) => ({ name: t.name, ok: src[t.id] != null }));
+      if (f.stage === 'wager') return { v: 'finw', key: 'w', cat: fc.category, sub: usesPhones() ? 'Команды делают ставки: сколько очков готовы поставить?' : 'Каждая команда делает ставку — от 0 до всех своих очков', chips: chips(f.wagers) };
+      const ref = host ? hostPick(fc.media, fc.aMedia, f.showAnswer) : settings.phoneMedia ? phonePick(fc.media, fc.aMedia, f.showAnswer) : null;
+      const v = {
+        v: 'finq', key: 'q', cat: 'Финал', label: fc.category || '',
+        text: host || settings.phoneText ? fc.q : 'Вопрос — на экране ведущего',
+        media: ref ? (host ? ref : describe(ref)) : null, mediaKey: ref ? `fin:${ref === fc.aMedia ? 'a' : 'q'}` : '',
+        autoplay: settings.mediaSync === 'all',
       };
-      if (f.stage !== 'wager') v.fin.show = phoneShow(phonePick(fc.media, fc.aMedia, f.showAnswer), fc.q, f.showAnswer ? fc.a : '');
+      if (f.stage === 'clue') {
+        if (f.deadline) v.timer = { deadline: f.deadline, total: settings.finalTimer * 1000 };
+        if (usesPhones()) v.chips = chips(f.answers);
+      }
+      if (f.stage === 'reveal') {
+        const myTeam = player(pid)?.teamId;
+        v.cards = [...S.teams].sort((a, b) => a.score - b.score).map((t) => {
+          const judged = f.judged[t.id];
+          const w = f.wagers[t.id] || 0;
+          const showWager = judged != null || host || t.id === myTeam;
+          const open = f.shown[t.id] || judged != null;
+          return {
+            name: t.name, color: t.color,
+            answer: open ? f.answers[t.id] ?? (usesPhones() ? '' : 'вслух') : null,
+            note: judged != null ? `ставка ${fmt(w)} → ${signed(judged ? w : -w)}` : showWager ? `ставка ${fmt(w)}` : 'ставка скрыта',
+            cls: judged == null ? '' : judged ? 'good' : 'bad',
+          };
+        });
+        if (f.showAnswer && (host || settings.phoneText)) v.answer = { text: fc.a };
+      }
+      return v;
     }
-    if (['roundEnd', 'end'].includes(S.phase)) v.standings = standings().map((x) => ({ name: x.name, score: x.score, me: x.id === pid }));
-    return v;
+    if (S.phase === 'end') return { v: 'end', key: 'end', standings: standingsFor(pid) };
+    return { v: 'empty' };
+  }
+
+  function standingsFor(pid) {
+    const mine = player(pid)?.teamId;
+    return standings().map((t) => ({ name: t.name, color: t.color, score: t.score, me: t.id === mine }));
+  }
+
+  function teamsFor(pid) {
+    const c = S.clue;
+    const f = S.fin;
+    const mine = player(pid)?.teamId;
+    return S.teams.map((t) => {
+      let badge = '';
+      const cls = [];
+      if (S.phase === 'board' && S.picker === t.id) badge = 'выбирает';
+      if (S.phase === 'clue' && c) {
+        if (c.buzzed?.team === t.id) { badge = player(c.buzzed.pid) ? `отвечает ${player(c.buzzed.pid).name}` : 'отвечает'; cls.push('answering'); }
+        else if (c.dd && c.ddTeam === t.id && c.stage !== 'answer') { badge = 'ставка'; cls.push('answering'); }
+        else if (c.tried.includes(t.id) && c.stage !== 'answer') { badge = 'мимо'; cls.push('out'); }
+      }
+      if (S.phase === 'final' && f) {
+        if (f.stage === 'wager' && f.wagers[t.id] != null) badge = 'ставка ✓';
+        if (f.stage === 'clue' && f.answers[t.id] != null) badge = 'ответ ✓';
+      }
+      if (t.id === mine) cls.push('mine');
+      return {
+        id: t.id, name: t.name, color: t.color, score: t.score, badge, cls, step: step(),
+        members: solo() ? [] : members(t.id).map((p) => ({ name: p.name, online: !p.phone || p.online })),
+        sub: solo() ? '' : members(t.id).length ? '' : usesPhones() ? 'пока никого' : '',
+        joinable: pid != null && !solo() && (S.phase === 'lobby' || !team(mine)), mine: t.id === mine,
+      };
+    });
+  }
+
+  // Everything a phone needs: the shared screen plus what only this player should know.
+  function playerView(pid) {
+    const p = player(pid);
+    const t = team(p?.teamId);
+    const c = S.clue;
+    const f = S.fin;
+    const view = viewFor(pid);
+    // Phones run their own clock: send the time left, not our deadline.
+    if (view.timer) view.timer = { remain: view.timer.deadline - Date.now(), total: view.timer.total };
+    const me = { pid, team: t ? { id: t.id, name: t.name, color: t.color } : null, needTeam: !t && !solo(), name: p?.name || '' };
+    if (S.phase === 'clue' && c) {
+      me.clue = {
+        stage: c.stage, openId: c.openId, dd: c.dd, ddMine: c.dd && c.ddTeam === p?.teamId, ddTeam: tinfo(c.ddTeam), wager: c.wager,
+        triedMine: !!t && c.tried.includes(t.id), buzzedMine: !!t && c.buzzed?.team === t.id, buzzedTeam: tinfo(c.buzzed?.team),
+        buzzedName: player(c.buzzed?.pid)?.name || '', lockedMs: Math.max(0, (locks[pid] || 0) - Date.now()),
+        result: c.result ? { mine: c.result.team === t?.id, delta: c.result.delta, team: tinfo(c.result.team) } : null,
+        wagerReq: c.stage === 'ddIntro' && t && c.ddTeam === t.id ? ddRange(t) : null,
+      };
+    }
+    if (S.phase === 'final' && f && t) {
+      me.fin = { stage: f.stage, max: Math.max(0, t.score), wager: f.wagers[t.id] ?? null, answer: f.answers[t.id] ?? null, judged: f.judged[t.id] ?? null };
+    }
+    return { t: 'state', phase: S.phase, mode: S.mode, title: board.title, round: S.phase === 'final' ? 'Финал' : R()?.name || '', view, teams: teamsFor(pid), me, teamMode: S.teamMode };
   }
 
   function hostView() {
@@ -509,23 +679,9 @@ export async function startPlay(root, boardId) {
       } : null,
       clue: c ? { cat: r.categories[c.c].name, value: worth() || c.value, q: cl.q, a: cl.a, stage: c.stage, dd: c.dd, status: statusText() } : null,
       fin: S.phase === 'final' ? { cat: board.final.category, q: board.final.q, a: board.final.a, stage: S.fin.stage, status: statusText() } : null,
-      players: S.players.map((p) => ({ id: p.id, name: p.name, score: p.score, online: p.online, phone: p.phone, picker: S.picker === p.id })),
+      teams: S.teams.map((t) => ({ id: t.id, name: t.name, color: t.color, score: t.score, online: canPlay(t), members: members(t.id).map((p) => p.name), picker: S.picker === t.id })),
       controls: controls(),
       canUndo: hist.length > 0,
-    };
-  }
-
-  // A file can be kept off the phones with its own checkbox in the editor.
-  const forPhones = (ref) => (ref && ref.phone !== false ? ref : null);
-  // Answer media replaces the question's once revealed; if it's hidden, the question's stays.
-  const phonePick = (qRef, aRef, revealed) => (revealed && forPhones(aRef)) || forPhones(qRef);
-
-  // What phones show of the current clue; the toggles in settings decide how much.
-  function phoneShow(ref, q, a) {
-    return {
-      media: settings.phoneMedia ? describe(ref) : null,
-      text: settings.phoneText ? String(q || '').slice(0, 2000) : '',
-      answer: settings.phoneText ? String(a || '').slice(0, 500) : '',
     };
   }
 
@@ -589,7 +745,7 @@ export async function startPlay(root, boardId) {
   let hostWinSeen = 0;
   let hostWinShown = false;
   const hostWinOpen = () => Date.now() - hostWinSeen < 5000;
-  const hostWinUrl = () => new URL(`join/?k=${S.hostKey}&local=1`, location.href.split('#')[0]).href;
+  const hostWinUrl = () => new URL(`join/?k=${S.hostKey}&local=1`, pageUrl()).href;
 
   function syncChannel() {
     if (!S || !('BroadcastChannel' in window)) return;
@@ -620,12 +776,13 @@ export async function startPlay(root, boardId) {
       return;
     }
     w.focus();
+    if (!settings.shared) { settings.shared = true; saveSettings(); commit(); }
     toast('В Discord показывай только окно с игрой, а не весь экран');
   }
 
   function commit() {
     if (destroyed) return;
-    if (S.phase === 'end') recordHistory();
+    if (S.phase === 'end' && !autotest) recordHistory();
     syncChannel();
     persist();
     render();
@@ -637,18 +794,17 @@ export async function startPlay(root, boardId) {
     const c = S.clue;
     if (S.phase === 'final') {
       const f = S.fin;
-      if (f.stage === 'wager') return `Ставки: ${Object.keys(f.wagers).length} из ${S.players.length}`;
-      if (f.stage === 'clue') return `Ответы: ${Object.keys(f.answers).length} из ${S.players.length}`;
+      if (f.stage === 'wager') return `Ставки: ${Object.keys(f.wagers).length} из ${S.teams.length}`;
+      if (f.stage === 'clue') return `Ответы: ${Object.keys(f.answers).length} из ${S.teams.length}`;
       return 'Проверяем ответы';
     }
     if (!c) return '';
-    const bn = player(c.buzzed)?.name;
     switch (c.stage) {
-      case 'ddIntro': return `Вопрос-ставка! Отвечает ${player(c.ddPlayer)?.name || '…'}`;
-      case 'reading': return c.dd ? `${player(c.ddPlayer)?.name}: ставка ${fmt(c.wager)}` : usesPhones() ? 'Кнопки закрыты' : 'Кто ответит?';
+      case 'ddIntro': return `Вопрос-ставка! Отвечают ${team(c.ddTeam)?.name || '…'}`;
+      case 'reading': return c.dd ? `${team(c.ddTeam)?.name}: ставка ${fmt(c.wager)}` : usesPhones() ? 'Кнопки закрыты' : 'Кто ответит?';
       case 'open': return 'Кнопки открыты — жмите!';
-      case 'buzzed': return `${bn} отвечает`;
-      case 'answer': return c.result ? `${player(c.result.pid)?.name}: ${signed(c.result.delta)}` : 'Никто не ответил';
+      case 'buzzed': return `Отвечают ${team(c.buzzed?.team)?.name}${player(c.buzzed?.pid) ? ` (${player(c.buzzed.pid).name})` : ''}`;
+      case 'answer': return c.result ? `${team(c.result.team)?.name}: ${signed(c.result.delta)}` : 'Никто не ответил';
     }
     return '';
   }
@@ -659,13 +815,13 @@ export async function startPlay(root, boardId) {
       const v = worth();
       switch (c.stage) {
         case 'ddIntro': {
-          const p = player(c.ddPlayer);
-          const rows = [{ title: 'Кто отвечает?', items: S.players.map((x) => ({ label: x.name, act: 'ddPlayer', args: { pid: x.id }, cls: 'chip' + (x.id === c.ddPlayer ? ' sel' : '') })) }];
-          if (p) {
-            const { min, max } = ddRange(p);
+          const t = team(c.ddTeam);
+          const rows = [{ title: 'Кто отвечает?', items: S.teams.map((x) => ({ label: x.name, act: 'ddTeam', args: { team: x.id }, cls: 'chip' + (x.id === c.ddTeam ? ' sel' : '') })) }];
+          if (t) {
+            const { min, max } = ddRange(t);
             rows.push({
-              title: p.phone && p.online ? `Ставка ${p.name} (${fmt(min)}–${fmt(max)}) — ждём с телефона или введи сам` : `Ставка ${p.name} (${fmt(min)}–${fmt(max)})`,
-              items: [{ type: 'wager', act: 'ddWager', min, max, value: Math.min(max, c.value), label: 'Принять ставку' }],
+              title: withPhones(t) ? `Ставка ${t.name} (${fmt(min)}–${fmt(max)}) — ждём с телефона или введи сам` : `Ставка ${t.name} (${fmt(min)}–${fmt(max)})`,
+              items: [{ type: 'wager', act: 'ddWager', min, max, value: Math.min(max, c.value), label: 'Принять' }],
             });
           }
           return rows;
@@ -677,11 +833,11 @@ export async function startPlay(root, boardId) {
             { items: [{ label: 'Никто не знает — показать ответ', act: 'reveal', cls: 'ghost', key: 'N' }] },
           ];
           return [
-            ...S.players.map((p) => ({
-              title: p.name, inline: true,
+            ...S.teams.map((t) => ({
+              title: t.name, inline: true,
               items: [
-                { label: `✓ +${fmt(v)}`, act: 'correct', args: { pid: p.id }, cls: 'green', disabled: c.tried.includes(p.id) },
-                { label: `✗ −${fmt(v)}`, act: 'wrong', args: { pid: p.id }, cls: 'red', disabled: c.tried.includes(p.id) },
+                { label: `✓ +${fmt(v)}`, act: 'correct', args: { team: t.id }, cls: 'green', disabled: c.tried.includes(t.id) },
+                { label: `✗ −${fmt(v)}`, act: 'wrong', args: { team: t.id }, cls: 'red', disabled: c.tried.includes(t.id) },
               ],
             })),
             { items: [{ label: 'Показать ответ', act: 'reveal', cls: 'ghost', key: 'N' }] },
@@ -689,7 +845,7 @@ export async function startPlay(root, boardId) {
         case 'open': {
           const el = eligible();
           const rows = [];
-          if (el.some((p) => !p.phone)) rows.push({ title: 'Кто поднял руку?', items: el.map((p) => ({ label: p.name, act: 'manualBuzz', args: { pid: p.id }, cls: 'chip' })) });
+          if (el.some((t) => !withPhones(t))) rows.push({ title: 'Кто поднял руку?', items: el.map((t) => ({ label: t.name, act: 'manualBuzz', args: { team: t.id }, cls: 'chip' })) });
           rows.push({ items: [{ label: 'Никто не знает — показать ответ', act: 'reveal', cls: 'ghost', key: 'N' }] });
           return rows;
         }
@@ -704,32 +860,32 @@ export async function startPlay(root, boardId) {
     }
     if (S.phase === 'roundEnd') {
       const nx = nextRoundIndex();
-      const label = nx >= 0 ? `Дальше: ${board.rounds[nx].name}` : finalReady(board) && S.players.length ? 'Финальный вопрос' : 'Итоги';
+      const label = nx >= 0 ? `Дальше: ${board.rounds[nx].name}` : finalReady(board) && S.teams.length ? 'Финальный вопрос' : 'Итоги';
       return [{ items: [{ label, act: 'nextRound', cls: 'primary big', key: 'Пробел' }] }];
     }
     if (S.phase === 'final') {
       const f = S.fin;
       if (f.stage === 'wager') {
-        const rows = S.players.filter((p) => !p.phone || !p.online || !usesPhones()).map((p) => ({
-          title: `${p.name}${f.wagers[p.id] != null ? ` — ставка ${fmt(f.wagers[p.id])}` : ''}`, inline: true,
-          items: [{ type: 'wager', act: 'finWager', args: { pid: p.id }, min: 0, max: Math.max(0, p.score), value: f.wagers[p.id] ?? '', label: 'OK' }],
+        const rows = S.teams.filter((t) => !withPhones(t) || !usesPhones()).map((t) => ({
+          title: `${t.name}${f.wagers[t.id] != null ? ` — ${fmt(f.wagers[t.id])}` : ''}`, inline: true,
+          items: [{ type: 'wager', act: 'finWager', args: { team: t.id }, min: 0, max: Math.max(0, t.score), value: f.wagers[t.id] ?? '', label: 'OK' }],
         }));
         rows.push({ items: [{ label: 'Показать вопрос', act: 'finClue', cls: 'primary big' }] });
         return rows;
       }
       if (f.stage === 'clue') return [{ items: [{ label: 'Смотреть ответы', act: 'finReveal', cls: 'primary big' }] }];
       if (f.stage === 'reveal') {
-        const rows = [...S.players].sort((a, b) => a.score - b.score).map((p) => {
-          const w = f.wagers[p.id] || 0;
-          const ans = f.answers[p.id];
-          const typed = usesPhones() && p.phone;
-          let title = p.name;
+        const rows = [...S.teams].sort((a, b) => a.score - b.score).map((t) => {
+          const w = f.wagers[t.id] || 0;
+          const ans = f.answers[t.id];
+          const typed = usesPhones() && withPhones(t) || ans != null;
+          let title = t.name;
           let items;
-          if (typed && !f.shown[p.id]) items = [{ label: 'Показать ответ', act: 'finShow', args: { pid: p.id } }];
+          if (typed && !f.shown[t.id]) items = [{ label: 'Показать ответ', act: 'finShow', args: { team: t.id } }];
           else {
             if (typed) title += `: «${ans || '—'}»`;
-            if (f.judged[p.id] == null) items = [{ label: '✓ Верно', act: 'finJudge', args: { pid: p.id, ok: true }, cls: 'green' }, { label: '✗ Неверно', act: 'finJudge', args: { pid: p.id, ok: false }, cls: 'red' }];
-            else items = [{ type: 'note', text: `ставка ${fmt(w)} → ${signed(f.judged[p.id] ? w : -w)}` }];
+            if (f.judged[t.id] == null) items = [{ label: '✓', act: 'finJudge', args: { team: t.id, ok: true }, cls: 'green' }, { label: '✗', act: 'finJudge', args: { team: t.id, ok: false }, cls: 'red' }];
+            else items = [{ type: 'note', text: `${signed(f.judged[t.id] ? w : -w)}` }];
           }
           return { title, inline: true, items };
         });
@@ -744,6 +900,24 @@ export async function startPlay(root, boardId) {
     return [];
   }
 
+  // The host's side panel: correct answer plus the buttons that run the game.
+  function hostPanel() {
+    const c = S.clue;
+    const hidden = settings.shared;
+    if (S.phase === 'board') {
+      return { kind: 'host', lbl: 'Ход игры', text: team(S.picker) ? 'Выбирают {team}. Кликни по клетке за них — или дождись, пока выберут у себя.' : 'Кликни по клетке.', team: tinfo(S.picker), controls: [] };
+    }
+    if (S.phase === 'clue' && c) {
+      const cl = clueAt(c);
+      return { kind: 'host', answer: c.stage === 'answer' ? null : cl.a, hidden, status: c.stage === 'answer' ? statusText() : '', controls: controls() };
+    }
+    if (S.phase === 'final' && S.fin) {
+      const f = S.fin;
+      return { kind: 'host', lbl: f.stage === 'wager' ? 'Финал: ставки' : '', answer: f.stage === 'wager' || f.showAnswer ? null : board.final.a, hidden, status: statusText(), controls: controls() };
+    }
+    return { kind: 'host', controls: controls() };
+  }
+
   // ---------- rendering ----------
   function render() {
     if (destroyed) return;
@@ -754,6 +928,7 @@ export async function startPlay(root, boardId) {
 
   function renderSetup() {
     mounted = 'setup';
+    unmountScreen();
     root.className = 'page-play-setup';
     root.innerHTML = `
       <div class="page center narrow">
@@ -763,14 +938,15 @@ export async function startPlay(root, boardId) {
         <div class="modes">
           <button class="mode-card" data-mode="simple">
             <b>Простой</b><span class="mode-sub">Один экран, ведущий — ты</span>
-            <span class="muted">Выводишь доску на телевизор, читаешь вопросы, сам отмечаешь, кто ответил.</span>
+            <span class="muted">Выводишь доску на телевизор, читаешь вопросы, сам отмечаешь, какая команда ответила.</span>
           </button>
           <button class="mode-card hot" data-mode="buzzer">
-            <b>С кнопками</b><span class="mode-sub">Игроки жмут на своих телефонах</span>
-            <span class="muted">Каждый заходит по коду или QR и пытается нажать первым. Хаос приветствуется.</span>
+            <b>С кнопками</b><span class="mode-sub">Каждый со своего телефона или компьютера</span>
+            <span class="muted">Игроки заходят по коду или QR, видят доску и вопросы у себя и жмут первыми.</span>
           </button>
         </div>
-        <div class="settings-card">${settingsHTML()}</div>
+        <a class="btn small" href="test/?board=${esc(board.id)}">🧪 Проверить одному на тест-стенде</a>
+        <div class="settings-card" style="margin-top:16px">${settingsHTML()}</div>
         <p class="muted small">Очки — просто очки. Никто никому ничего не платит.</p>
       </div>`;
     bindSettings(root);
@@ -778,21 +954,22 @@ export async function startPlay(root, boardId) {
   }
 
   function settingsHTML() {
-    const opt = (v, cur, label) => `<option value="${v}" ${+cur === v ? 'selected' : ''}>${label}</option>`;
+    const opt = (v, cur, label) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${label}</option>`;
     return `
+      <label class="set-row"><span>Экран ведущего <small class="muted">(«общий» — если его видят игроки: на телевизоре или в трансляции. Тогда ответ скрыт)</small></span><select class="input small" data-set="shared" data-bool>${opt(false, settings.shared, 'Свой')}${opt(true, settings.shared, 'Общий')}</select></label>
       <label class="set-row"><span>Вопросы-ставки <small class="muted">(случайные клетки, где можно поставить свои очки)</small></span><input type="checkbox" data-set="dd" ${settings.dd ? 'checked' : ''}></label>
       <label class="set-row"><span>Таймер на ответ</span><select class="input small" data-set="timer">${[0, 10, 15, 20, 30, 45].map((v) => opt(v, settings.timer, v ? `${v} сек` : 'выкл')).join('')}</select></label>
       <label class="set-row"><span>Таймер в финале</span><select class="input small" data-set="finalTimer">${[0, 30, 45, 60, 90].map((v) => opt(v, settings.finalTimer, v ? `${v} сек` : 'выкл')).join('')}</select></label>
+      <label class="set-row"><span>Видео и музыка</span><select class="input small" data-set="mediaSync" data-str>${opt('all', settings.mediaSync, 'запускать у всех')}${opt('self', settings.mediaSync, 'каждый жмёт сам')}</select></label>
+      <label class="set-row"><span>Картинки, видео и аудио у игроков</span><input type="checkbox" data-set="phoneMedia" ${settings.phoneMedia ? 'checked' : ''}></label>
+      <label class="set-row"><span>Текст вопроса и ответ у игроков</span><input type="checkbox" data-set="phoneText" ${settings.phoneText ? 'checked' : ''}></label>
       <label class="set-row"><span>Звуки</span><input type="checkbox" data-set="sound" ${settings.sound ? 'checked' : ''}></label>
-      <label class="set-row"><span>Штраф за фальстарт <small class="muted">(нажал раньше времени — кнопка блокируется на 1 сек)</small></span><input type="checkbox" data-set="penalty" ${settings.penalty ? 'checked' : ''}></label>
-      <label class="set-row"><span>Картинки, видео и аудио на телефонах игроков <small class="muted">(файлы заранее загружаются на телефоны)</small></span><input type="checkbox" data-set="phoneMedia" ${settings.phoneMedia ? 'checked' : ''}></label>
-      <label class="set-row"><span>Текст вопроса и ответ на телефонах игроков</span><input type="checkbox" data-set="phoneText" ${settings.phoneText ? 'checked' : ''}></label>
-      <label class="set-row"><span>Показывать ответ прямо на игровом экране <small class="muted">(только если экран видишь ты один. Для телевизора и Discord открой «👁 Окно ведущего» — ответы будут там)</small></span><input type="checkbox" data-set="hostAnswer" ${settings.hostAnswer ? 'checked' : ''}></label>`;
+      <label class="set-row"><span>Штраф за фальстарт <small class="muted">(нажал раньше времени — кнопка блокируется на 1 сек)</small></span><input type="checkbox" data-set="penalty" ${settings.penalty ? 'checked' : ''}></label>`;
   }
   function bindSettings(el) {
     el.querySelectorAll('[data-set]').forEach((i) => i.addEventListener('change', () => {
       const k = i.dataset.set;
-      settings[k] = i.type === 'checkbox' ? i.checked : +i.value;
+      settings[k] = i.type === 'checkbox' ? i.checked : 'bool' in i.dataset ? i.value === 'true' : 'str' in i.dataset ? i.value : +i.value;
       sound.on = settings.sound;
       saveSettings();
       if (S && S.phase !== 'setup') commit();
@@ -802,12 +979,14 @@ export async function startPlay(root, boardId) {
   async function chooseMode(mode) {
     unlock();
     S.mode = mode;
+    if (!S.teams.length) { newTeam(); newTeam(); }
     if (mode === 'buzzer') {
       const box = $('.modes', root);
-      box.innerHTML = `<div class="connecting"><div class="spinner"></div>Создаём комнату…</div>`;
+      if (box) box.innerHTML = `<div class="connecting"><div class="spinner"></div>Создаём комнату…</div>`;
       try {
         await startNet();
       } catch (e) {
+        if (!box) throw e;
         box.innerHTML = `<div class="err-card"><b>Не получилось создать комнату</b><p>${esc(errText(e))}</p>
           <button class="btn" data-retry>Попробовать снова</button> <button class="btn ghost" data-simple>Играть в простом режиме</button></div>`;
         box.querySelector('[data-retry]').onclick = () => chooseMode('buzzer');
@@ -817,6 +996,7 @@ export async function startPlay(root, boardId) {
     }
     S.phase = 'lobby';
     commit();
+    if (autotest && S.code) parent.postMessage({ plyukh: 'room', code: S.code }, location.origin);
   }
 
   async function startNet(code) {
@@ -826,29 +1006,34 @@ export async function startPlay(root, boardId) {
     if (code && S.code !== code) toast(`Новый код комнаты: ${S.code}. Игрокам нужно зайти заново`, 'warn');
   }
 
+  // ---------- lobby: players and teams ----------
   function renderLobby() {
     if (mounted !== 'lobby') {
       mounted = 'lobby';
+      unmountScreen();
       root.className = 'page-lobby';
       const phones = usesPhones();
+      const base = new URL('join/', pageUrl());
       root.innerHTML = `
         <div class="page center narrow">
           <a class="back-link" href="#/">← Мои игры</a>
           <h1 class="page-title">${esc(board.title)}</h1>
           <p class="muted">${phones ? 'Собираем игроков' : 'Кто играет?'}</p>
           ${phones ? `
-            <p class="join-hint">Наведи камеру на QR-код или открой <b>${esc(new URL('join/', location.href.split('#')[0]).host + new URL('join/', location.href.split('#')[0]).pathname)}</b> и введи код</p>
+            <p class="join-hint">Наведи камеру на QR-код или открой <b>${esc(base.host + base.pathname)}</b> и введи код</p>
             <div class="room-code">${esc(S.code)}</div>
             <div class="qr-big">${qrSvg(joinUrl())}</div>
             <button class="link-btn" data-copy="join">Скопировать ссылку для входа</button>
             <div class="remote-card">
               <div><b>Пульт ведущего на телефоне</b><p class="muted small">Видишь правильные ответы и управляешь игрой со своего телефона. QR пульта откроется отдельно — чтобы игроки его не увидели.</p>
               <button class="btn small" data-remote>Показать QR пульта</button> <button class="link-btn" data-copy="remote">Скопировать ссылку</button></div>
-            </div>` : ''}
-          <div class="lobby-players"></div>
+            </div>
+            <div class="team-mode"><button class="btn small" data-tm="teams">Команды</button><button class="btn small" data-tm="solo">Каждый сам за себя</button></div>` : ''}
+          <div class="lobby-teams"></div>
+          <div class="lobby-free"></div>
           <form class="add-player">
-            <input class="input" maxlength="20" placeholder="${phones ? 'Игрок без телефона' : 'Имя игрока'}">
-            <button class="btn">Добавить</button>
+            <input class="input" maxlength="24" placeholder="Название команды">
+            <button class="btn">+ Команда</button>
           </form>
           <button class="btn primary big wide" data-start></button>
         </div>`;
@@ -857,304 +1042,137 @@ export async function startPlay(root, boardId) {
       $('.add-player', root).addEventListener('submit', (e) => {
         e.preventDefault();
         const i = $('.add-player input', root);
-        const name = i.value.trim().slice(0, 20);
-        if (!name) return;
-        S.players.push({ id: uid('p'), name, score: 0, phone: false, online: false });
+        newTeam(i.value.trim() || undefined);
         i.value = '';
         commit();
-        i.focus();
       });
+      root.querySelectorAll('[data-tm]').forEach((b) => b.addEventListener('click', () => setTeamMode(b.dataset.tm)));
       $('[data-start]', root).addEventListener('click', () => {
         unlock();
-        if (!S.players.length) return toast(usesPhones() ? 'Ждём хотя бы одного игрока' : 'Добавь хотя бы одного игрока');
+        if (!S.teams.length) return toast('Добавь хотя бы одну команду');
+        if (usesPhones() && !S.players.length) return toast('Ждём хотя бы одного игрока');
         if (firstRound() < 0) return toast('В этой игре ещё нет вопросов — заполни доску в редакторе');
+        if (!solo()) S.teams = S.teams.filter((t) => members(t.id).length || !usesPhones() || S.teams.length <= 1);
         beginGame();
         commit();
       });
-      $('.lobby-players', root).addEventListener('click', (e) => {
-        const k = e.target.closest('[data-kick]');
-        if (k) kick(k.dataset.kick);
+      root.addEventListener('click', (e) => {
+        const r = e.target.closest('[data-trename]');
+        if (r) return renameTeam(r.dataset.trename);
+        const d = e.target.closest('[data-tdel]');
+        if (d) { removeTeam(d.dataset.tdel); return commit(); }
+        const p = e.target.closest('[data-pmenu]');
+        if (p) return playerMenu(p.dataset.pmenu);
       });
     }
-    const list = $('.lobby-players', root);
-    setHTML(list, S.players.length
-      ? S.players.map((p) => `<div class="lp"><span class="dot ${p.phone ? (p.online ? 'on' : 'off') : 'none'}"></span><span class="lp-name">${esc(p.name)}</span>${p.phone ? '' : '<span class="muted small">без телефона</span>'}<button class="icon-btn" data-kick="${esc(p.id)}" title="Убрать">×</button></div>`).join('')
-      : `<div class="lp empty muted">${usesPhones() ? 'Пока никого… ждём игроков' : 'Добавь игроков ниже'}</div>`);
-    $('[data-start]', root).textContent = `Начать игру (${S.players.length} ${plural(S.players.length, 'игрок', 'игрока', 'игроков')})`;
+    root.querySelectorAll('[data-tm]').forEach((b) => b.classList.toggle('primary', b.dataset.tm === S.teamMode));
+    $('.add-player', root).hidden = solo();
+    const chip = (p) => `<button type="button" class="lp-chip ${p.phone && !p.online ? 'off' : ''}" data-pmenu="${esc(p.id)}">${p.phone ? `<span class="dot ${p.online ? 'on' : 'off'}"></span>` : ''}${esc(p.name)}</button>`;
+    setHTML($('.lobby-teams', root), S.teams.length ? S.teams.map((t) => `
+      <div class="lt" style="--tc:${t.color}">
+        <span class="lt-dot"></span>
+        <div class="lt-main">
+          <button type="button" class="lt-name" data-trename="${esc(t.id)}" title="Переименовать">${esc(t.name)}</button>
+          ${solo() ? '' : `<div class="lt-members">${members(t.id).map(chip).join('') || `<span class="muted small">${usesPhones() ? 'игроки выбирают команду на телефоне' : 'команда без телефонов'}</span>`}</div>`}
+        </div>
+        <button type="button" class="icon-btn" data-tdel="${esc(t.id)}" title="Убрать команду">×</button>
+      </div>`).join('') : `<div class="lp empty muted">${usesPhones() ? 'Пока никого… ждём игроков' : 'Добавь команды ниже'}</div>`);
+    const free = S.players.filter((p) => !team(p.teamId));
+    setHTML($('.lobby-free', root), free.length && !solo() ? `<div class="muted small">Ещё не выбрали команду:</div><div class="lt-members">${free.map(chip).join('')}</div>` : '');
+    const n = solo() ? S.teams.length : S.players.length;
+    $('[data-start]', root).textContent = usesPhones()
+      ? `Начать игру (${n} ${plural(n, 'игрок', 'игрока', 'игроков')}${solo() ? '' : `, ${S.teams.length} ${plural(S.teams.length, 'команда', 'команды', 'команд')}`})`
+      : `Начать игру (${S.teams.length} ${plural(S.teams.length, 'команда', 'команды', 'команд')})`;
+  }
+
+  function setTeamMode(mode) {
+    if (S.teamMode === mode) return;
+    S.teamMode = mode;
+    S.teams = [];
+    for (const p of S.players) p.teamId = null;
+    if (mode === 'solo') for (const p of S.players) soloTeam(p);
+    else { newTeam(); newTeam(); }
+    commit();
+  }
+
+  async function renameTeam(tid) {
+    const t = team(tid);
+    if (!t) return;
+    const v = await promptDlg('Название команды', t.name);
+    if (v && v.trim()) { t.name = v.trim().slice(0, 24); commit(); }
+  }
+
+  // ---------- the game screen ----------
+  function unmountScreen() {
+    screen?.destroy();
+    screen = null;
   }
 
   function mountGame() {
     mounted = 'game';
     root.className = 'page-game';
-    root.innerHTML = `
-      <div class="play">
-        <header class="topbar">
-          <button class="icon-btn" data-ui="exit" title="Выйти">←</button>
-          <span class="logo small">${LOGO_SVG}<span>Плюх</span></span>
-          <span class="tb-title"></span>
-          <span class="tb-spacer"></span>
-          <button class="btn small ghost" data-ui="undo" title="Отменить (Ctrl+Z)">↶ Отменить</button>
-          <button class="btn small ghost" data-ui="full" title="Во весь экран (F)">⛶</button>
-          <button class="btn small" data-ui="hostwin" title="Отдельное окно с правильными ответами. В Discord показывай только окно с игрой">👁 Окно ведущего</button>
-          <button class="btn small" data-ui="menu">☰ Меню</button>
-        </header>
-        <main class="board-wrap"><div class="board"></div></main>
-        <footer class="scorebar"><div class="sb-qr"></div><div class="scores"></div></footer>
-        <div class="overlay" hidden></div>
-        <canvas class="confetti" hidden></canvas>
-      </div>`;
-    const play = $('.play', root);
-    play.addEventListener('click', (e) => {
-      const cell = e.target.closest('[data-pick]');
-      if (cell) { const [c, q] = cell.dataset.pick.split(',').map(Number); return act('pick', { c, q }); }
-      const ui = e.target.closest('[data-ui]');
-      if (ui) return uiAction(ui.dataset.ui, ui.dataset);
-      const media = e.target.closest('.ov-media img');
-      if (media) media.classList.toggle('zoom');
+    root.innerHTML = '';
+    screen = createScreen(root, {
+      role: 'host',
+      on: onScreen,
+      mediaNode: (ref, autoplay) => mediaEl(ref, { autoplay }),
+      settings: () => ({ html: settingsHTML(), bind: bindSettings }),
+      links: () => [
+        { name: 'hostwin', label: '👁 Окно ведущего (для трансляции)' },
+        ...(usesPhones() ? [{ name: 'remote', label: '📱 Пульт на телефоне (QR)' }] : []),
+        { name: 'addTeam', label: '+ Добавить команду' },
+        ...(['board', 'clue'].includes(S.phase) ? [{ name: 'endRound', label: 'Завершить раунд досрочно' }] : []),
+        { name: 'exit', label: 'Выйти на главную' },
+        { name: 'restart', label: 'Начать заново', cls: 'danger' },
+      ],
     });
-    bindControls($('.overlay', root), (a, args) => act(a, args));
   }
 
   function renderGame() {
-    if (mounted !== 'game') mountGame();
-    const r = R();
-    $('.tb-title', root).innerHTML = `${esc(board.title)} <span class="muted">· ${esc(S.phase === 'final' ? 'Финал' : r.name)}</span>`;
-    $('[data-ui=undo]', root).disabled = !hist.length;
-    renderBoard();
-    renderScores();
-    renderOverlay();
+    if (mounted !== 'game' || !screen) mountGame();
+    screen.update({
+      title: board.title,
+      round: S.phase === 'final' ? 'Финал' : R()?.name || '',
+      tools: { code: usesPhones() ? S.code : null, canUndo: hist.length > 0, shared: settings.shared },
+      view: viewFor(null),
+      teams: teamsFor(null),
+      panel: hostPanel(),
+    });
   }
 
-  function renderBoard() {
-    const r = R();
-    const el = $('.board', root);
-    el.style.setProperty('--cols', r.categories.length);
-    el.style.setProperty('--rows', r.values.length);
-    const html = r.categories.map((c) => `<div class="cat"><span>${esc(c.name)}</span></div>`).join('') +
-      r.values.map((v, qi) => r.categories.map((cat, ci) => {
-        const used = S.used[keyOf(S.round, ci, qi)] || !filled(cat.clues[qi]);
-        return `<button class="cell ${used ? 'used' : ''}" data-pick="${ci},${qi}" ${used ? 'disabled' : ''}>${used ? '' : fmt(v)}</button>`;
-      }).join('')).join('');
-    setHTML(el, html);
-  }
-
-  function renderScores() {
-    const c = S.clue;
-    const step = Math.min(...R().values.filter((v) => v > 0), 100) || 100;
-    setHTML($('.scores', root), S.players.map((p) => {
-      const cls = [
-        S.picker === p.id ? 'picker' : '',
-        p.phone && !p.online ? 'offline' : '',
-        c?.buzzed === p.id || (c?.dd && c.ddPlayer === p.id && c.stage !== 'ddIntro') ? 'active' : '',
-        c?.tried.includes(p.id) ? 'tried' : '',
-      ].join(' ');
-      return `<div class="chip-player ${cls}">
-        ${S.picker === p.id ? '<span class="badge">выбирает</span>' : ''}
-        <button class="pm" data-ui="adj" data-pid="${esc(p.id)}" data-d="${-step}" title="−${step}">−</button>
-        <button class="pn" data-ui="player" data-pid="${esc(p.id)}">${p.phone ? `<span class="dot ${p.online ? 'on' : 'off'}"></span>` : ''}${esc(p.name)}</button>
-        <span class="ps ${p.score < 0 ? 'neg' : ''}">${fmt(p.score)}</span>
-        <button class="pm" data-ui="adj" data-pid="${esc(p.id)}" data-d="${step}" title="+${step}">+</button>
-      </div>`;
-    }).join(''));
-    const qr = $('.sb-qr', root);
-    if (usesPhones()) setHTML(qr, `<button class="sb-qr-btn" data-ui="qr" title="Показать QR-код">${qrSvg(joinUrl())}<span>${esc(S.code)}</span></button>`);
-    else setHTML(qr, '');
-  }
-
-  function textSize(t, hasMedia) {
-    const n = (t || '').length;
-    const base = n < 50 ? 6 : n < 110 ? 5 : n < 200 ? 4 : 3.2;
-    return hasMedia ? base * 0.62 : base;
-  }
-
-  function setMedia(el, ref, key) {
-    if (el._mkey === key) return;
-    el._mkey = key;
-    el.innerHTML = '';
-    el.classList.toggle('has', !!ref);
-    if (!ref) return;
-    mediaEl(ref, { autoplay: true }).then((node) => { if (el._mkey === key) el.append(node); });
-  }
-
-  function overlayView() {
-    const r = R();
-    if (S.phase === 'clue' && S.clue) {
-      const c = S.clue;
-      const cl = clueAt(c);
-      const cat = r.categories[c.c].name;
-      const showAns = c.stage === 'answer';
-      const ref = showAns && cl.aMedia ? cl.aMedia : c.stage === 'ddIntro' ? null : cl.media;
-      const top = `<button class="btn small light" data-ui="back">← Назад <kbd>Esc</kbd></button>
-        <div class="ov-cat"><b>${esc(cat)}</b><span>${c.dd ? (c.wager != null ? `ставка ${fmt(c.wager)}` : 'вопрос-ставка') : fmt(c.value)}</span></div>
-        ${c.dd ? '<span class="pill neutral">Вопрос-ставка</span>' : usesPhones() ? `<span class="pill ${c.stage === 'open' ? 'on' : ''}">${c.stage === 'open' ? 'Кнопки открыты' : 'Кнопки закрыты'}</span>` : '<span></span>'}`;
-      let main = '';
-      let status = '';
-      if (c.stage === 'ddIntro') {
-        main = `<div class="dd-banner">Вопрос-ставка!</div>`;
-      } else {
-        main = `<div class="clue-text" style="--fs:${textSize(cl.q, !!ref)}">${nl2br(cl.q)}</div>${showAns ? '' : hostPeek(cl.a)}`;
-        if (c.stage === 'open' && c.deadline) status = timerHTML(c.deadline, settings.timer);
-        if (c.stage === 'buzzed') status = `${c.ansDeadline ? timerHTML(c.ansDeadline, Math.max(5, settings.timer)) : ''}<div class="buzzed-name">Отвечает ${esc(player(c.buzzed)?.name)}!</div>`;
-        if (c.stage === 'reading' && c.dd) status = `<div class="buzzed-name">Отвечает ${esc(player(c.ddPlayer)?.name)} · ставка ${fmt(c.wager)}</div>`;
-        if (c.stage === 'open' && c.tried.length) status += `<div class="muted-light">Уже ошиблись: ${c.tried.map((id) => esc(player(id)?.name)).join(', ')}</div>`;
-        if (showAns) {
-          const res = c.result;
-          status = `${res ? `<div class="res ${res.delta >= 0 ? 'good' : 'bad'}"><span>${esc(player(res.pid)?.name)}</span><b>${signed(res.delta)}</b></div>` : '<div class="res none">Никто не ответил</div>'}
-            <div class="answer">${nl2br(cl.a || '—')}</div>`;
-        }
-      }
-      return { key: `clue-${c.key}`, cls: `clue ${showAns ? 'show-answer' : ''} ${c.stage === 'ddIntro' ? 'dd' : ''}`, top, main, status, ref, mkey: `${c.key}-${showAns && cl.aMedia ? 'a' : c.stage === 'ddIntro' ? 'none' : 'q'}` };
-    }
-    if (S.phase === 'roundEnd') {
-      return { key: 'roundEnd', cls: 'interlude', main: `<div class="big-title">${esc(r.name)} — всё!</div>${standingsHTML()}` };
-    }
-    if (S.phase === 'final') {
-      const f = S.fin;
-      const fc = board.final;
-      const top = `<span></span><div class="ov-cat"><b>Финал</b><span>${esc(fc.category || '')}</span></div><span class="pill">${esc(statusText())}</span>`;
-      if (f.stage === 'wager') {
-        return { key: 'fin-wager', cls: 'final', top, main: `<div class="final-cat"><small>Тема финала</small>${esc(fc.category || 'Финальный вопрос')}</div><p class="muted-light">${usesPhones() ? 'Делайте ставки на телефонах: сколько очков вы готовы поставить?' : 'Каждый игрок делает ставку — от 0 до всех своих очков.'}</p>`, status: wagerStatus() };
-      }
-      const ref = f.stage === 'reveal' && f.showAnswer && fc.aMedia ? fc.aMedia : fc.media;
-      const main = `<div class="clue-text" style="--fs:${textSize(fc.q, !!ref)}">${nl2br(fc.q)}</div>${f.showAnswer ? '' : hostPeek(fc.a)}`;
-      let status = '';
-      if (f.stage === 'clue') status = `${f.deadline ? timerHTML(f.deadline, settings.finalTimer) : ''}${usesPhones() ? wagerStatus('answers') : ''}`;
-      if (f.stage === 'reveal' && f.showAnswer) status = `<div class="answer">${nl2br(fc.a || '—')}</div>`;
-      return { key: `fin-${f.stage === 'wager' ? 'w' : 'q'}`, cls: `final ${f.stage === 'reveal' ? 'reveal' : ''}`, top, main, status, ref, mkey: `fin-${f.stage === 'reveal' && f.showAnswer && fc.aMedia ? 'a' : 'q'}` };
-    }
-    if (S.phase === 'end') {
-      const st = standings();
-      const podium = st.slice(0, 3).map((p, i) => `<div class="pod pod${i + 1}"><div class="pod-name">${esc(p.name)}</div><div class="pod-score">${fmt(p.score)}</div><div class="pod-bar">${i + 1}</div></div>`);
-      const order = [podium[1], podium[0], podium[2]].filter(Boolean).join('');
-      return { key: 'end', cls: 'interlude end', main: `<div class="big-title">${st[0] ? `Победа: ${esc(st[0].name)}!` : 'Игра окончена'}</div><div class="podium">${order}</div>${st.length > 3 ? standingsHTML(3) : ''}` };
-    }
-    return null;
-  }
-
-  // The correct answer for the host, shown before it is revealed (toggle in settings).
-  // Never while the host window is open: then the answer lives there, off the shared screen.
-  function hostPeek(a) {
-    if (!settings.hostAnswer || hostWinOpen()) return '';
-    return `<div class="host-ans"><small>Ответ для ведущего</small><b>${nl2br(a || '—')}</b></div>`;
-  }
-
-  function wagerStatus(kind = 'wagers') {
-    const f = S.fin;
-    const src = kind === 'wagers' ? f.wagers : f.answers;
-    return `<div class="wager-status">${S.players.map((p) => `<span class="ws ${src[p.id] != null ? 'ok' : ''}">${src[p.id] != null ? '✓' : '…'} ${esc(p.name)}</span>`).join('')}</div>`;
-  }
-
-  function standingsHTML(from = 0) {
-    return `<ol class="standings" start="${from + 1}">${standings().slice(from).map((p) => `<li><span>${esc(p.name)}</span><b class="${p.score < 0 ? 'neg' : ''}">${fmt(p.score)}</b></li>`).join('')}</ol>`;
-  }
-
-  function timerHTML(deadline, total) {
-    return `<div class="timer" data-deadline="${deadline}" data-total="${total * 1000}"><span></span></div>`;
-  }
-
-  function renderOverlay() {
-    const ov = $('.overlay', root);
-    const v = overlayView();
-    if (!v) {
-      ov.hidden = true;
-      ov.dataset.key = '';
-      ov.innerHTML = '';
-      setConfetti(false);
-      return;
-    }
-    ov.hidden = false;
-    if (ov.dataset.key !== v.key) {
-      ov.dataset.key = v.key;
-      ov.innerHTML = `<div class="ov-top"></div><div class="ov-body"><div class="ov-media"></div><div class="ov-main"></div><div class="ov-status"></div></div><div class="ov-ctl"></div>`;
-    }
-    ov.className = `overlay ${v.cls || ''}`;
-    setHTML($('.ov-top', ov), v.top || '');
-    setMedia($('.ov-media', ov), v.ref || null, v.mkey || v.key);
-    setHTML($('.ov-main', ov), v.main || '');
-    setHTML($('.ov-status', ov), v.status || '');
-    setHTML($('.ov-ctl', ov), controlsHTML(controls()));
-    tickTimers();
-    setConfetti(S.phase === 'end');
-  }
-
-  // ---------- timers ----------
-  function tickTimers() {
-    const now = Date.now();
-    for (const t of root.querySelectorAll('.timer')) {
-      const left = Math.max(0, +t.dataset.deadline - now);
-      const total = +t.dataset.total || 1;
-      t.style.setProperty('--p', (left / total).toFixed(3));
-      t.firstElementChild.textContent = Math.ceil(left / 1000);
-      t.classList.toggle('low', left < 5000);
-    }
-  }
-  const tick = setInterval(() => {
-    if (!S || destroyed) return;
-    tickTimers();
-    if (hostWinShown !== hostWinOpen()) { hostWinShown = !hostWinShown; render(); }
-    const c = S.clue;
-    const now = Date.now();
-    if (S.phase === 'clue' && c?.stage === 'open' && c.deadline && now >= c.deadline && !buzzTimer) {
-      c.stage = 'answer';
-      sfx('timeup');
-      commit();
-    } else if (S.phase === 'clue' && c?.stage === 'buzzed' && c.ansDeadline && now >= c.ansDeadline && !c.ansBeeped) {
-      c.ansBeeped = true;
-      sfx('timeup');
-    } else if (S.phase === 'final' && S.fin?.stage === 'clue' && S.fin.deadline && now >= S.fin.deadline && !S.fin.timeUp) {
-      S.fin.timeUp = true;
-      sfx('timeup');
-      commit();
-    }
-  }, 200);
-
-  // ---------- confetti ----------
-  let confettiRaf = 0;
-  function setConfetti(on) {
-    const cv = $('.confetti', root);
-    if (!cv) return;
-    if (!on) { cancelAnimationFrame(confettiRaf); confettiRaf = 0; cv.hidden = true; return; }
-    if (confettiRaf) return;
-    cv.hidden = false;
-    const ctx = cv.getContext('2d');
-    const colors = ['#e8662e', '#f5c518', '#1f9d68', '#2a7de1', '#d2312b', '#ffffff'];
-    let parts = [];
-    const spawn = (n) => { for (let i = 0; i < n; i++) parts.push({ x: Math.random() * cv.width, y: -20 - Math.random() * cv.height * 0.5, vx: (Math.random() - 0.5) * 2, vy: 2 + Math.random() * 3, r: Math.random() * 6.28, vr: (Math.random() - 0.5) * 0.3, s: 6 + Math.random() * 8, c: colors[(Math.random() * colors.length) | 0] }); };
-    const resize = () => { cv.width = innerWidth; cv.height = innerHeight; };
-    resize();
-    spawn(220);
-    let frames = 0;
-    const step = () => {
-      if (cv.width !== innerWidth) resize();
-      ctx.clearRect(0, 0, cv.width, cv.height);
-      for (const p of parts) {
-        p.x += p.vx; p.y += p.vy; p.r += p.vr;
-        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.fillStyle = p.c; ctx.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); ctx.restore();
-      }
-      parts = parts.filter((p) => p.y < cv.height + 30);
-      if (++frames < 240 && frames % 20 === 0) spawn(30);
-      if (parts.length) confettiRaf = requestAnimationFrame(step);
-      else { confettiRaf = 0; cv.hidden = true; }
-    };
-    confettiRaf = requestAnimationFrame(step);
-  }
-
-  // ---------- topbar / scoreboard UI ----------
-  async function uiAction(what, ds) {
-    switch (what) {
-      case 'exit': {
-        if (await confirmDlg('Выйти из игры? Её можно будет продолжить позже с того же места.', 'Выйти')) location.hash = '#/';
+  async function onScreen(type, d = {}) {
+    switch (type) {
+      case 'pick': return act('pick', d);
+      case 'act': return act(d.a, d.args);
+      case 'adj': return act('adj', { team: d.team, delta: d.delta });
+      case 'teamMenu': return teamMenu(d.team);
+      case 'tool':
+        if (d.name === 'code') return showQR();
+        if (d.name === 'undo') return act('undo');
+        if (d.name === 'full') return toggleFullscreen();
+        if (d.name === 'exit') return exitGame();
+        if (d.name === 'shared') { settings.shared = !settings.shared; saveSettings(); toast(settings.shared ? 'Общий экран: ответы скрыты' : 'Свой экран: ответы видны'); return commit(); }
         return;
-      }
-      case 'undo': return act('undo');
-      case 'full': return toggleFullscreen();
-      case 'back': return act('back');
-      case 'adj': return act('adj', { pid: ds.pid, delta: +ds.d });
-      case 'qr': return showQR();
-      case 'hostwin': return openHostWindow();
-      case 'player': return playerMenu(ds.pid);
-      case 'menu': return menu();
+      case 'link':
+        if (d.name === 'hostwin') return openHostWindow();
+        if (d.name === 'remote') return showRemoteQR();
+        if (d.name === 'addTeam') {
+          const name = await promptDlg('Название команды', '', { placeholder: 'Например, Котики' });
+          if (name != null) { newTeam(name.trim() || undefined); if (!team(S.picker)) S.picker = S.teams[0].id; commit(); }
+          return;
+        }
+        if (d.name === 'endRound' && (await confirmDlg('Закончить раунд? Оставшиеся вопросы пропадут.', 'Закончить'))) return act('endRound');
+        if (d.name === 'exit') return exitGame();
+        if (d.name === 'restart' && (await confirmDlg('Начать игру заново? Все очки обнулятся.', 'Заново', true))) {
+          hist = [];
+          beginGame();
+          commit();
+        }
     }
+  }
+
+  async function exitGame() {
+    if (autotest || (await confirmDlg('Выйти из игры? Её можно будет продолжить позже с того же места.', 'Выйти'))) location.hash = '#/';
   }
 
   function toggleFullscreen() {
@@ -1179,68 +1197,69 @@ export async function startPlay(root, boardId) {
     });
   }
 
+  async function teamMenu(tid) {
+    const t = team(tid);
+    if (!t) return;
+    const m = members(tid);
+    const r = await dialog({
+      title: t.name,
+      html: `<p class="muted">Очки: ${fmt(t.score)}${m.length ? ` · ${m.map((p) => esc(p.name)).join(', ')}` : ''}</p>`,
+      cls: 'menu-dlg',
+      buttons: [
+        { label: 'Сейчас выбирают они', value: 'picker' },
+        { label: 'Изменить очки', value: 'score' },
+        { label: 'Переименовать', value: 'rename' },
+        ...m.map((p) => ({ label: `Игрок: ${p.name}…`, value: `p:${p.id}` })),
+        { label: 'Убрать команду', value: 'del', cls: 'danger' },
+        { label: 'Закрыть', value: null, cls: 'ghost' },
+      ],
+    });
+    if (r === 'picker') act('setPicker', { team: tid });
+    if (r === 'score') {
+      const v = await promptDlg(`Очки: ${t.name}`, t.score, { type: 'number' });
+      if (v != null && v !== '') act('setScore', { team: tid, value: +v });
+    }
+    if (r === 'rename') renameTeam(tid);
+    if (r?.startsWith?.('p:')) playerMenu(r.slice(2));
+    if (r === 'del' && (await confirmDlg(`Убрать команду «${t.name}»? Её игроки останутся без команды.`, 'Убрать', true))) { removeTeam(tid); commit(); }
+  }
+
   async function playerMenu(pid) {
     const p = player(pid);
     if (!p) return;
     const r = await dialog({
       title: p.name,
-      html: `<p class="muted">Очки: ${fmt(p.score)}${p.phone ? ` · ${p.online ? 'на связи' : 'не на связи'}` : ' · без телефона'}</p>`,
+      html: `<p class="muted">${p.phone ? (p.online ? 'на связи' : 'не на связи') : 'без телефона'}${team(p.teamId) ? ` · ${esc(team(p.teamId).name)}` : ''}</p>`,
       cls: 'menu-dlg',
       buttons: [
-        { label: 'Сейчас выбирает он/она', value: 'picker' },
-        { label: 'Изменить очки', value: 'score' },
-        { label: 'Переименовать', value: 'rename' },
+        ...(solo() ? [] : S.teams.filter((t) => t.id !== p.teamId).map((t) => ({ label: `→ В команду «${t.name}»`, value: `t:${t.id}` }))),
         { label: 'Убрать из игры', value: 'kick', cls: 'danger' },
         { label: 'Закрыть', value: null, cls: 'ghost' },
       ],
     });
-    if (r === 'picker') act('setPicker', { pid });
-    if (r === 'score') {
-      const v = await promptDlg(`Очки: ${p.name}`, p.score, { type: 'number' });
-      if (v != null && v !== '') act('setScore', { pid, value: +v });
-    }
-    if (r === 'rename') {
-      const v = await promptDlg('Новое имя', p.name);
-      if (v && v.trim()) { p.name = v.trim().slice(0, 20); commit(); }
-    }
+    if (r?.startsWith?.('t:')) { p.teamId = r.slice(2); commit(); }
     if (r === 'kick' && (await confirmDlg(`Убрать ${p.name} из игры?`, 'Убрать', true))) kick(pid);
   }
 
-  async function menu() {
-    const r = await dialog({
-      title: 'Меню',
-      cls: 'menu-dlg wide',
-      html: `<div class="settings-card">${settingsHTML()}</div>`,
-      onMount: (w) => bindSettings(w),
-      buttons: [
-        { label: 'Окно ведущего на этом компьютере', value: 'hostwin' },
-        ...(usesPhones() ? [{ label: 'Ведущий с телефона (QR)', value: 'remote' }] : []),
-        { label: 'Добавить игрока', value: 'add' },
-        ...(['board', 'clue'].includes(S.phase) ? [{ label: 'Завершить раунд досрочно', value: 'endRound' }] : []),
-        { label: 'Выйти на главную', value: 'exit' },
-        { label: 'Начать заново', value: 'restart', cls: 'danger' },
-        { label: 'Готово', value: null, cls: 'primary' },
-      ],
-    });
-    if (r === 'remote') showRemoteQR();
-    if (r === 'hostwin') openHostWindow();
-    if (r === 'add') {
-      const name = await promptDlg('Имя игрока', '', { placeholder: 'Например, Вася' });
-      if (name && name.trim()) {
-        S.players.push({ id: uid('p'), name: name.trim().slice(0, 20), score: 0, phone: false, online: false });
-        if (!player(S.picker)) S.picker = S.players[0].id;
-        commit();
-      }
-    }
-    if (r === 'endRound' && (await confirmDlg('Закончить раунд? Оставшиеся вопросы пропадут.', 'Закончить'))) act('endRound');
-    if (r === 'exit') return uiAction('exit');
-    if (r === 'restart' && (await confirmDlg('Начать игру заново? Все очки обнулятся.', 'Заново', true))) {
-      hist = [];
-      beginGame();
+  // ---------- timers ----------
+  const tick = setInterval(() => {
+    if (!S || destroyed) return;
+    if (hostWinShown !== hostWinOpen()) { hostWinShown = !hostWinShown; render(); }
+    const c = S.clue;
+    const now = Date.now();
+    if (S.phase === 'clue' && c?.stage === 'open' && c.deadline && now >= c.deadline && !buzzTimer) {
+      c.stage = 'answer';
+      sfx('timeup');
+      commit();
+    } else if (S.phase === 'clue' && c?.stage === 'buzzed' && c.ansDeadline && now >= c.ansDeadline && !c.ansBeeped) {
+      c.ansBeeped = true;
+      sfx('timeup');
+    } else if (S.phase === 'final' && S.fin?.stage === 'clue' && S.fin.deadline && now >= S.fin.deadline && !S.fin.timeUp) {
+      S.fin.timeUp = true;
+      sfx('timeup');
       commit();
     }
-    render();
-  }
+  }, 200);
 
   // ---------- keyboard ----------
   function onKey(e) {
@@ -1256,22 +1275,22 @@ export async function startPlay(root, boardId) {
       if (S.phase === 'roundEnd') return act('nextRound');
     }
     if (e.code === 'KeyN' && c) return act('reveal');
-    if (e.code === 'Escape' && c) return act('back');
+    if (e.code === 'Escape' && c) { if (screen?.el.querySelector('.q-media.zoom')) return; return act('back'); }
     if (e.code === 'KeyF') return toggleFullscreen();
   }
   document.addEventListener('keydown', onKey);
   const onBeforeUnload = (e) => {
-    if (S && !['setup', 'end'].includes(S.phase)) { e.preventDefault(); e.returnValue = ''; }
+    if (!autotest && S && !['setup', 'end'].includes(S.phase)) { e.preventDefault(); e.returnValue = ''; }
   };
   window.addEventListener('beforeunload', onBeforeUnload);
 
   // ---------- start ----------
-  const saved = store.get(SAVE_KEY);
-  if (saved?.boardId === board.id && saved.s && !['setup', 'end'].includes(saved.s.phase)) {
-    const n = saved.s.players.length;
+  const saved = autotest ? null : store.get(SAVE_KEY);
+  if (saved?.boardId === board.id && saved.s?.v === 2 && !['setup', 'end'].includes(saved.s.phase)) {
+    const n = saved.s.teams.length;
     const r = await dialog({
       title: 'Продолжить игру?',
-      html: `<p>Есть незаконченная игра по этой доске (${n} ${plural(n, 'игрок', 'игрока', 'игроков')}). Продолжить с того же места?</p>`,
+      html: `<p>Есть незаконченная игра по этой доске (${n} ${plural(n, 'команда', 'команды', 'команд')}). Продолжить с того же места?</p>`,
       buttons: [{ label: 'Новая игра', value: 'new' }, { label: 'Продолжить', value: 'resume', cls: 'primary' }],
     });
     if (r === 'resume') {
@@ -1293,14 +1312,17 @@ export async function startPlay(root, boardId) {
   }
   if (!S) {
     S = freshState();
-    render();
+    if (autotest) {
+      root.innerHTML = `<div class="page center"><div class="connecting"><div class="spinner"></div>Тест-стенд: создаём комнату…</div></div>`;
+      chooseMode('buzzer').catch((e) => { root.innerHTML = `<div class="page center"><h1>Не получилось создать комнату</h1><p class="muted">${esc(errText(e))}</p></div>`; });
+    } else render();
   }
 
   return () => {
     destroyed = true;
     clearInterval(tick);
     clearBuzz();
-    cancelAnimationFrame(confettiRaf);
+    unmountScreen();
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('beforeunload', onBeforeUnload);
     chan?.close();

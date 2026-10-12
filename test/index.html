@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Плюх — тест-стенд</title>
+  <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="../css/style.css?v=1791795754282">
+  <style>
+    html, body { height: 100%; }
+    body.tb-page { display: flex; flex-direction: column; overflow: hidden; }
+    .tb-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--bg2); font-size: 14px; }
+    .tb-head .back-link { margin: 0; }
+    .tb-head label { display: flex; align-items: center; gap: 6px; }
+    .tb-head select { width: auto; padding: .3em .5em; }
+    .tb-main { flex: 1; min-height: 0; display: flex; gap: 10px; padding: 10px; }
+    .tb-frame { display: flex; flex-direction: column; gap: 4px; min-width: 0; min-height: 0; }
+    .tb-frame > b { font-size: 12px; color: var(--muted); font-weight: 600; }
+    .tb-frame iframe { flex: 1; width: 100%; min-height: 0; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+    .tb-host { flex: 1 1 56%; }
+    .tb-players { flex: 0 1 auto; display: flex; gap: 10px; overflow-x: auto; min-width: 0; }
+    .tb-players.phone .tb-frame { width: 340px; flex: none; }
+    .tb-players.desktop { flex: 1 1 44%; flex-direction: column; overflow: auto; }
+    .tb-players.desktop .tb-frame { flex: 1 1 0; min-height: 260px; }
+    .tb-wait { align-self: center; color: var(--muted); padding: 20px; }
+    @media (max-width: 900px) { .tb-main { flex-direction: column; overflow: auto; } .tb-host { min-height: 75vh; flex: none; } .tb-players { flex: none; } .tb-players .tb-frame { min-height: 640px; } }
+  </style>
+</head>
+<body class="tb-page">
+  <header class="tb-head">
+    <a class="back-link" href="../">← На главную</a>
+    <b>🧪 Тест-стенд</b>
+    <label>Игра <select class="input" id="tb-board"></select></label>
+    <label>Игроков <select class="input" id="tb-n"><option>1</option><option selected>2</option><option>3</option><option>4</option></select></label>
+    <label>Экраны игроков <select class="input" id="tb-dev"><option value="phone">телефон</option><option value="desktop">компьютер</option></select></label>
+    <button class="btn small primary" id="tb-start">↻ Перезапустить</button>
+    <span class="muted small" id="tb-status"></span>
+  </header>
+  <main class="tb-main">
+    <section class="tb-frame tb-host"><b>Ведущий</b><iframe id="tb-host" title="Ведущий"></iframe></section>
+    <section class="tb-players phone" id="tb-players"></section>
+  </main>
+  <script type="module" src="../js/testbench.js?v=1791795754282"></script>
+</body>
+</html>

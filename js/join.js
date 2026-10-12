@@ -1,9 +1,11 @@
-// Phone page: a player's buzzer, or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791789810288';
-import { VERSION } from './version.js?v=1791789810288';
-import { Client, LocalLink } from './net.js?v=1791789810288';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791789810288';
-import { MediaReceiver } from './mediasync.js?v=1791789810288';
+// Player page: the game screen (board, questions, buzzing) on a phone or a computer,
+// or the host's remote when opened with ?k=<host key>.
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791795754282';
+import { VERSION } from './version.js?v=1791795754282';
+import { Client, LocalLink } from './net.js?v=1791795754282';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791795754282';
+import { MediaReceiver } from './mediasync.js?v=1791795754282';
+import { createScreen, prefs } from './gameui.js?v=1791795754282';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -13,29 +15,32 @@ const role = hostKey ? 'host' : 'player';
 // Host window opened from the game screen on the same computer (no room code, no network).
 const local = role === 'host' && params.get('local') === '1';
 if (local) document.title = 'Окно ведущего — Плюх';
+// Test bench (test/): a fake player in a frame, with its own id and an automatic team.
+const testN = params.get('test');
 
 let client = null;
 let view = null;
 let pid = null;
-let name = store.get('plyukh-name', '');
+let name = testN ? params.get('tname') || `Игрок ${testN}` : store.get('plyukh-name', '');
 let mounted = false;
+let screen = null;
 let lastOpenId = 0;
 let openAt = 0;
 let pressedOpen = 0;
 let earlyAt = 0;
 let lockedUntil = 0;
-let deadline = 0;
 
 // Clue media streamed from the host; kept for the whole visit, so reconnects don't download it again.
 let mediaRaf = 0;
 const receiver = new MediaReceiver(() => {
   if (mediaRaf || mounted !== 'player') return;
-  mediaRaf = requestAnimationFrame(() => { mediaRaf = 0; if (view) renderClue(view); });
+  mediaRaf = requestAnimationFrame(() => { mediaRaf = 0; if (view) renderPlayer(); });
 });
 
 const logo = `<a class="logo" href="../">${LOGO_SVG}<span>Плюх</span></a>`;
 
 function pidFor(c) {
+  if (testN) return `test-${testN}`;
   const k = 'plyukh-pid-' + c;
   let p = store.get(k);
   if (!p) { p = uid('p'); store.set(k, p); }
@@ -51,6 +56,8 @@ function leave(home = false) {
   client = null;
   view = null;
   mounted = false;
+  screen?.destroy();
+  screen = null;
   document.getElementById('banner')?.remove();
   if (home || role === 'host') { location.href = '../'; return; }
   code = '';
@@ -58,21 +65,19 @@ function leave(home = false) {
   codeScreen();
 }
 
+async function confirmLeave(home) {
+  const playing = role === 'player' && view && !['lobby', 'end'].includes(view.phase);
+  if (playing && !(await confirmDlg('Выйти из игры? Очки команды сохранятся — можно вернуться по тому же коду.', 'Выйти'))) return;
+  leave(home);
+}
+
 async function openMenu() {
-  const player = role === 'player';
   const r = await dialog({
-    title: player ? `Комната ${code}` : local ? 'Окно ведущего' : 'Пульт ведущего',
+    title: local ? 'Окно ведущего' : 'Пульт ведущего',
     cls: 'menu-dlg',
-    buttons: [
-      ...(player ? [{ label: 'Выйти из комнаты', value: 'leave' }] : []),
-      { label: 'На главную', value: 'home' },
-      { label: 'Отмена', value: null, cls: 'ghost' },
-    ],
+    buttons: [{ label: 'На главную', value: 'home' }, { label: 'Отмена', value: null, cls: 'ghost' }],
   });
-  if (!r) return;
-  const playing = player && view && !['lobby', 'end'].includes(view.phase);
-  if (playing && !(await confirmDlg('Выйти из игры? Очки сохранятся — можно вернуться по тому же коду.', 'Выйти'))) return;
-  leave(r === 'home');
+  if (r) leave(true);
 }
 
 const menuButton = '<button type="button" class="ph-menu" data-menu aria-label="Меню">☰</button>';
@@ -130,6 +135,8 @@ function nameScreen() {
 
 function messageScreen(title, text, retry = false) {
   mounted = false;
+  screen?.destroy();
+  screen = null;
   app.innerHTML = `<div class="ph-center">${homeLink}${logo}<h1>${esc(title)}</h1><p class="muted">${esc(text)}</p>
     ${retry ? '<button class="btn primary big wide" data-retry>Войти снова</button>' : ''}</div>`;
   $('[data-retry]', app)?.addEventListener('click', () => { code = ''; history.replaceState(null, '', '?'); codeScreen(); });
@@ -139,18 +146,20 @@ function connect() {
   pid = role === 'host' ? 'host' : pidFor(code);
   mounted = false;
   view = null;
+  screen?.destroy();
+  screen = null;
   app.innerHTML = `<div class="ph-center">${homeLink}${logo}<div class="connecting"><div class="spinner"></div>${local ? 'Подключаемся к экрану игры…' : `Подключаемся к комнате ${esc(code)}…`}</div>
     <button type="button" class="link-btn" data-cancel>${role === 'player' ? 'Отмена — ввести другой код' : 'Отмена'}</button></div>`;
   $('[data-cancel]', app).addEventListener('click', () => leave());
   const handlers = {
-    onOpen: () => client.send({ t: 'hello', role, pid, name, key: hostKey, have: receiver.keys(), v: VERSION }),
+    onOpen: () => client.send({ t: 'hello', role, pid, name, key: hostKey, have: receiver.keys(), v: VERSION, auto: !!testN }),
     onData: onMsg,
     onStatus: (s) => { app.dataset.net = s; },
     onNoRoom: () => { client = null; codeScreen(`Комната ${code} не найдена. Проверь код на экране`); },
   };
   client = local ? new LocalLink(hostKey, handlers) : new Client(code, handlers);
   client.connect();
-  if (!local) wake();
+  if (!local && !testN) wake();
 }
 
 function onMsg(d) {
@@ -160,11 +169,14 @@ function onMsg(d) {
   if (d.t === 'kicked') { client.stop(); store.del('plyukh-pid-' + code); return messageScreen('Ты вне игры', 'Ведущий убрал тебя из этой комнаты', true); }
   if (d.t !== 'state' && d.t !== 'hstate') return;
   view = d;
-  const c = d.clue;
-  if (c?.stage === 'open' && c.openId !== lastOpenId) { lastOpenId = c.openId; openAt = performance.now(); }
-  if (c?.lockedMs > 0) lockedUntil = Date.now() + c.lockedMs;
-  const remain = c?.remainMs || d.fin?.remainMs || 0;
-  deadline = remain > 0 ? Date.now() + remain : 0;
+  if (d.t === 'state') {
+    const c = d.me?.clue;
+    if (c?.stage === 'open' && c.openId !== lastOpenId) { lastOpenId = c.openId; openAt = performance.now(); }
+    if (c?.lockedMs > 0) lockedUntil = Date.now() + c.lockedMs;
+    // The host sends time left; turn it into our own clock once, on arrival.
+    const t = d.view?.timer;
+    if (t) d.view.timer = { deadline: Date.now() + t.remain, total: t.total };
+  }
   render();
 }
 
@@ -172,7 +184,7 @@ function onMsg(d) {
 function checkVersion(hostV) {
   if (hostV === VERSION) return;
   if (!hostV || hostV < VERSION) {
-    banner('Ведущему нужно обновить страницу игры (F5) — иначе картинки и видео не придут на телефоны.');
+    banner('Ведущему нужно обновить страницу игры (F5) — иначе часть игры не будет работать.');
     return;
   }
   // This page came from the browser cache and is older than the host's: load it fresh, once.
@@ -188,129 +200,38 @@ function checkVersion(hostV) {
   location.replace(u.href);
 }
 
-// ---------- player view ----------
-function buzzer(v) {
-  const c = v.clue;
-  if (v.phase !== 'clue' || !c) return { cls: 'off', big: 'Плюх!', small: '(пока рано)' };
+// ---------- player: buzzing ----------
+function buzzState(v) {
+  const me = v.me;
+  const c = me.clue;
+  if (v.phase === 'board') return { cls: 'bs-closed', big: 'Плюх!', small: v.view?.mine ? 'ваш выбор — нажми на клетку' : 'ждём вопрос' };
+  if (v.phase !== 'clue' || !c) return { cls: 'bs-closed', big: 'Плюх!', small: '' };
   if (c.stage === 'answer') {
     const r = c.result;
-    if (r?.me) return { cls: r.delta >= 0 ? 'mine' : 'bad', big: signed(r.delta), small: r.delta >= 0 ? 'верно!' : 'неверно' };
-    return { cls: 'off', big: r ? r.name : 'Никто', small: r ? `${signed(r.delta)}` : 'не ответил' };
+    if (r?.mine) return { cls: r.delta >= 0 ? 'bs-mine' : 'bs-bad', big: signed(r.delta), small: r.delta >= 0 ? 'верно!' : 'неверно' };
+    return { cls: 'bs-off', big: r ? r.team?.name || '' : 'Никто', small: r ? signed(r.delta) : 'не ответил' };
   }
-  if (c.dd) {
-    if (c.ddMe && c.stage === 'reading') return { cls: 'mine', big: 'Отвечай!', small: `ставка ${fmt(c.wager)}` };
-    return { cls: 'off', big: 'Ставка', small: c.ddName ? `отвечает ${c.ddName}` : '' };
-  }
-  if (v.mode !== 'buzzer') return { cls: 'off', big: 'Плюх!', small: 'в этой игре отвечают вслух' };
   if (c.stage === 'reading') {
-    if (Date.now() - earlyAt < 900) return { cls: 'early', big: 'Рано!', small: 'дождись, пока откроют кнопки' };
-    return { cls: 'ready', big: 'Плюх!', small: '(ещё закрыто)' };
+    if (Date.now() - earlyAt < 900) return { cls: 'bs-early', big: 'Рано!', small: 'дождись, пока откроют кнопки' };
+    return { cls: 'bs-closed', big: 'Плюх!', small: 'кнопки ещё закрыты' };
   }
   if (c.stage === 'open') {
-    if (c.triedMe) return { cls: 'done', big: 'Мимо', small: 'ты уже отвечал(а)' };
-    if (pressedOpen === c.openId) return { cls: 'pressed', big: 'Нажато!', small: 'кто же первый…' };
-    if (lockedUntil > Date.now()) return { cls: 'early', big: 'Фальстарт', small: 'кнопка заблокирована на секунду' };
-    return { cls: 'live', big: 'Плюх!', small: 'жми!' };
+    if (c.triedMine) return { cls: 'bs-done', big: 'Мимо', small: 'ваша команда уже отвечала' };
+    if (pressedOpen === c.openId) return { cls: 'bs-pressed', big: 'Нажато!', small: 'кто же первый…' };
+    if (lockedUntil > Date.now()) return { cls: 'bs-early', big: 'Фальстарт', small: 'кнопка заблокирована на секунду' };
+    return { cls: 'bs-live', big: 'Жми!', small: 'кнопки открыты' };
   }
-  if (c.stage === 'buzzed') return c.buzzedMe ? { cls: 'mine', big: 'Отвечай!', small: 'ты первый(ая)!' } : { cls: 'other', big: c.buzzedName || '…', small: 'отвечает' };
-  return { cls: 'off', big: 'Плюх!', small: '' };
-}
-
-function status(v) {
-  const c = v.clue;
-  const f = v.fin;
-  switch (v.phase) {
-    case 'lobby': return ['Ждём начала игры…', 'Как только ведущий начнёт, здесь появится кнопка'];
-    case 'board': return v.pickerMe ? ['Твой выбор!', 'Скажи тему и стоимость'] : [v.picker ? `Выбирает ${v.picker}` : 'Выбираем вопрос…', 'Смотри на экран'];
-    case 'clue': {
-      const head = `${c.cat || 'Вопрос'} · ${c.dd ? 'вопрос-ставка' : fmt(c.value)}`;
-      if (c.stage === 'ddIntro') return c.ddMe ? ['Вопрос-ставка!', `Сколько ставишь? От ${fmt(c.wagerReq?.min || 0)} до ${fmt(c.wagerReq?.max || 0)}`] : [head, `Вопрос-ставка у ${c.ddName || '…'}. Ждём ставку`];
-      if (c.stage === 'reading') return [head, c.dd ? (c.ddMe ? 'Отвечай вслух!' : `Отвечает ${c.ddName}`) : v.mode === 'buzzer' ? 'Слушай вопрос — кнопки скоро откроют' : 'Отвечай вслух'];
-      if (c.stage === 'open') return [head, c.triedMe ? 'Ждём остальных' : 'Кнопки открыты!'];
-      if (c.stage === 'buzzed') return [head, c.buzzedMe ? 'Говори ответ вслух!' : `Отвечает ${c.buzzedName}`];
-      return [head, c.result ? (c.result.me ? (c.result.delta >= 0 ? 'Красава!' : 'Не повезло') : `${c.result.name}: ${signed(c.result.delta)}`) : 'Никто не ответил'];
-    }
-    case 'roundEnd': return ['Раунд завершён', 'Промежуточные итоги'];
-    case 'final':
-      if (f.stage === 'wager') return [`Финал: ${f.cat || ''}`, f.wager != null ? `Ставка принята: ${fmt(f.wager)}. Можно поменять, пока не показали вопрос` : `Сколько ставишь? От 0 до ${fmt(f.max)}`];
-      if (f.stage === 'clue') return ['Финальный вопрос', f.answer != null ? 'Ответ отправлен. Можно исправить, пока идёт время' : 'Напиши ответ и отправь'];
-      return ['Ведущий проверяет ответы', f.judged == null ? `Твой ответ: «${f.answer || '—'}», ставка ${fmt(f.wager || 0)}` : f.judged ? `Верно! ${signed(f.wager || 0)}` : `Неверно: ${signed(-(f.wager || 0))}`];
-    case 'end': {
-      const place = (v.standings || []).findIndex((s) => s.me) + 1;
-      return [place === 1 ? 'Ты победил(а)! 🏆' : place ? `Ты на ${place} месте` : 'Игра окончена', 'Спасибо за игру!'];
-    }
+  if (c.stage === 'buzzed') {
+    if (c.buzzedMine) return { cls: 'bs-mine', big: 'Отвечайте!', small: c.buzzedName ? `${c.buzzedName} нажал(а) первым` : 'ваша команда первая' };
+    return { cls: 'bs-other', big: c.buzzedTeam?.name || '…', small: 'отвечают' };
   }
-  return ['', ''];
-}
-
-function mainBlock(v) {
-  const c = v.clue;
-  const f = v.fin;
-  if (v.phase === 'clue' && c?.stage === 'ddIntro' && c.ddMe && c.wagerReq) {
-    return { key: 'dd', html: wagerForm('dd', c.wagerReq.min, c.wagerReq.max, Math.min(c.wagerReq.max, c.value), 'Поставить') };
-  }
-  if (v.phase === 'final' && f.stage === 'wager') return { key: 'fw', html: wagerForm('fw', 0, f.max, f.wager ?? '', f.wager != null ? 'Изменить ставку' : 'Поставить') };
-  if (v.phase === 'final' && f.stage === 'clue') {
-    return { key: 'fa', html: `<form class="ph-form big-form" data-form="fa"><div class="ph-timer"><span></span></div><textarea class="input" rows="3" maxlength="300" placeholder="Твой ответ"></textarea><button class="btn primary big wide">Отправить ответ</button></form>` };
-  }
-  if (['roundEnd', 'end'].includes(v.phase) && v.standings) {
-    return { key: 'st', html: `<ol class="standings ph">${v.standings.map((s) => `<li class="${s.me ? 'me' : ''}"><span>${esc(s.name)}</span><b>${fmt(s.score)}</b></li>`).join('')}</ol>` };
-  }
-  return { key: 'buzzer', html: `<button class="buzzer" type="button"><span class="bz-timer"></span><span class="bz-big"></span><span class="bz-small"></span></button>` };
-}
-
-function wagerForm(kind, min, max, value, label) {
-  return `<form class="ph-form big-form" data-form="${kind}">
-    <input class="input wager-input" type="number" inputmode="numeric" min="${min}" max="${max}" value="${value}" placeholder="${min}–${max}">
-    <div class="quick">${[...new Set([min, Math.round(max / 2), max])].map((x) => `<button type="button" class="btn small" data-quick="${x}">${x === max && max > 0 ? 'Ва-банк ' : ''}${fmt(x)}</button>`).join('')}</div>
-    <button class="btn primary big wide">${esc(label)}</button>
-  </form>`;
-}
-
-function mountPlayer() {
-  mounted = 'player';
-  app.innerHTML = `<div class="ph-game">
-    <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>Плюх</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span>${menuButton}</header>
-    <div class="ph-status"><div class="ph-title"></div><div class="ph-sub"></div></div>
-    <div class="ph-clue"></div>
-    <div class="ph-main"></div>
-    <footer class="ph-foot"><span class="ph-name"></span><span class="ph-score"></span></footer>
-  </div>`;
-  $('.ph-clue', app).addEventListener('click', (e) => {
-    if (e.target.closest('.pc-media img')) e.target.closest('.pc-media').classList.toggle('zoom');
-  });
-  const main = $('.ph-main', app);
-  main.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('.buzzer')) { e.preventDefault(); press(); }
-  });
-  main.addEventListener('click', (e) => {
-    const q = e.target.closest('[data-quick]');
-    if (q) { const i = q.closest('form').querySelector('input'); i.value = q.dataset.quick; }
-  });
-  main.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const form = e.target;
-    const kind = form.dataset.form;
-    if (kind === 'fa') {
-      const t = form.querySelector('textarea').value.trim();
-      if (!t) return toast('Напиши ответ');
-      client.send({ t: 'fanswer', text: t });
-      toast('Ответ отправлен');
-      return;
-    }
-    const n = Math.round(+form.querySelector('input').value);
-    const min = +form.querySelector('input').min, max = +form.querySelector('input').max;
-    if (!Number.isFinite(n) || n < min || n > max) return toast(`Ставка от ${fmt(min)} до ${fmt(max)}`);
-    client.send({ t: kind === 'dd' ? 'wager' : 'fwager', amount: n });
-    toast('Ставка отправлена');
-    form.querySelector('input').blur();
-  });
+  return { cls: 'bs-closed', big: 'Плюх!', small: '' };
 }
 
 function press() {
-  const c = view?.clue;
+  const c = view?.me?.clue;
   if (!c || view.mode !== 'buzzer' || c.dd) return;
-  if (c.stage === 'open' && !c.triedMe && pressedOpen !== c.openId && lockedUntil <= Date.now()) {
+  if (c.stage === 'open' && !c.triedMine && pressedOpen !== c.openId && lockedUntil <= Date.now()) {
     pressedOpen = c.openId;
     client.send({ t: 'buzz', oid: c.openId, rt: performance.now() - openAt });
     navigator.vibrate?.(40);
@@ -323,74 +244,59 @@ function press() {
   render();
 }
 
-function renderPlayer() {
-  if (mounted !== 'player') mountPlayer();
-  const v = view;
-  const [t, s] = status(v);
-  $('.ph-title', app).textContent = t;
-  $('.ph-sub', app).textContent = s;
-  $('.ph-name', app).textContent = v.you?.name || name;
-  $('.ph-score', app).textContent = fmt(v.you?.score || 0);
-  $('.ph-score', app).classList.toggle('neg', (v.you?.score || 0) < 0);
-  renderClue(v);
-  const m = mainBlock(v);
-  const main = $('.ph-main', app);
-  if (main.dataset.key !== m.key) {
-    main.dataset.key = m.key;
-    main._html = null;
+// ---------- player: the side panel ----------
+function playerPanel(v) {
+  const me = v.me;
+  const c = me.clue;
+  const f = me.fin;
+  if (me.needTeam) return { kind: 'text', lbl: 'Команда', text: 'Выбери свою команду — нажми «Вступить».' };
+  if (v.phase === 'lobby') {
+    return me.team && v.teamMode !== 'solo'
+      ? { kind: 'text', lbl: 'Команда', text: 'Ты в команде {team}. Можно перейти в другую, пока игра не началась.', team: me.team }
+      : { kind: 'text', lbl: 'Скоро начнём', text: 'Ведущий собирает игроков.' };
   }
-  setHTML(main, m.html);
-  if (m.key === 'fa') {
-    const ta = main.querySelector('textarea');
-    if (ta && !ta.value && v.fin?.answer) ta.value = v.fin.answer;
+  if (v.phase === 'clue' && c) {
+    if (c.stage === 'ddIntro') {
+      if (c.wagerReq) return { kind: 'form', form: { key: `dd:${v.view?.key}`, type: 'wager', title: 'Ставка вашей команды', min: c.wagerReq.min, max: c.wagerReq.max, value: '', label: 'Поставить', sub: `От ${fmt(c.wagerReq.min)} до ${fmt(c.wagerReq.max)}` } };
+      return { kind: 'text', lbl: 'Вопрос-ставка', text: '{team} делают ставку.', team: c.ddTeam };
+    }
+    if (c.dd && c.stage !== 'answer') return { kind: 'text', lbl: 'Вопрос-ставка', text: c.ddMine ? `Ваша команда отвечает (ставка ${fmt(c.wager)}) — говорите вслух!` : `Отвечают {team}, ставка ${fmt(c.wager)}`, team: c.ddTeam };
+    if (v.mode !== 'buzzer') return { kind: 'text', text: 'Отвечайте вслух — ведущий отметит, кто прав.' };
+    return { kind: 'buzz', buzz: buzzState(v) };
   }
-  const b = main.querySelector('.buzzer');
-  if (b) {
-    const st = buzzer(v);
-    b.className = `buzzer ${st.cls}`;
-    b.querySelector('.bz-big').textContent = st.big;
-    b.querySelector('.bz-small').textContent = st.small;
+  if (v.phase === 'board') return v.mode === 'buzzer' ? { kind: 'buzz', buzz: buzzState(v) } : null;
+  if (v.phase === 'final' && f) {
+    if (f.stage === 'wager') return { kind: 'form', form: { key: 'fw', type: 'wager', title: 'Ставка вашей команды', min: 0, max: f.max, value: f.wager ?? (f.max ? '' : 0), label: 'Поставить', sub: f.wager != null ? `Принято: ${fmt(f.wager)}. Можно изменить, пока не показали вопрос` : f.max ? `От 0 до ${fmt(f.max)}` : 'У команды нет очков — ставка 0, но ответить можно' } };
+    if (f.stage === 'clue') return { kind: 'form', form: { key: 'fa', type: 'answer', title: 'Ответ вашей команды', value: f.answer ?? '', label: f.answer != null ? 'Исправить ответ' : 'Отправить ответ', sub: f.answer != null ? `Отправлено: «${f.answer}»` : 'Один ответ на команду' } };
+    return { kind: 'text', lbl: 'Финал', text: f.judged == null ? `Ваша ставка ${fmt(f.wager || 0)}. Ведущий проверяет ответы.` : f.judged ? `Верно! ${signed(f.wager || 0)}` : `Неверно: ${signed(-(f.wager || 0))}` };
   }
-  tick();
+  if (v.phase === 'final' && !f) return { kind: 'text', text: 'Финал играют команды.' };
+  if (v.phase === 'end' || v.phase === 'roundEnd') {
+    const st = v.view?.standings || [];
+    const place = st.findIndex((s) => s.me) + 1;
+    return { kind: 'text', lbl: v.phase === 'end' ? 'Итог' : 'Раунд завершён', text: place === 1 ? 'Ваша команда первая! 🏆' : place ? `Ваша команда на ${place} месте` : '' };
+  }
+  return null;
 }
 
-// ---------- the clue itself: media, text, answer ----------
+// ---------- player: the screen ----------
 const KIND_WORD = { image: 'картинку', audio: 'аудио', video: 'видео' };
 
-function renderClue(v) {
-  const box = $('.ph-clue', app);
-  const show = (v.phase === 'clue' && v.clue?.show) || (v.phase === 'final' && v.fin?.show) || null;
-  const has = !!(show && (show.media || show.text || show.answer));
-  $('.ph-game', app).classList.toggle('has-clue', has);
-  if (!has) {
-    if (box.firstChild) box.innerHTML = ''; // also stops any playing audio/video
-    return;
-  }
-  if (!box.firstChild) box.innerHTML = '<div class="pc-media"></div><div class="pc-text"></div><div class="pc-ans"></div>';
-  drawMedia($('.pc-media', box), show.media);
-  setHTML($('.pc-text', box), show.text ? nl2br(show.text) : '');
-  setHTML($('.pc-ans', box), show.answer ? `Ответ: <b>${nl2br(show.answer)}</b>` : '');
+function mediaReady(m) {
+  return m.k === 'youtube' || !!m.url || !!receiver.url(m.key);
 }
 
-function drawMedia(el, m) {
-  const url = m?.key ? receiver.url(m.key) : m?.url || null;
-  const ready = m && (m.k === 'youtube' || url);
-  const k = m ? `${m.key || m.url || `yt:${m.vid}:${m.start}`}|${ready ? 1 : 0}` : '';
-  if (el._mk !== k) {
-    el._mk = k;
-    el.classList.remove('zoom');
-    el.innerHTML = '';
-    if (m && !ready) el.innerHTML = `<div class="pc-loading">Загружаем ${KIND_WORD[m.k] || 'файл'}… <span class="pc-pct"></span></div>`;
-    else if (m) el.append(phoneMediaNode(m, url));
+async function playerMediaNode(m, autoplay) {
+  const url = m.key ? receiver.url(m.key) : m.url || null;
+  if (m.k !== 'youtube' && !url) {
+    const d = document.createElement('div');
+    d.className = 'pc-loading';
+    d.innerHTML = `Загружаем ${KIND_WORD[m.k] || 'файл'}… <span class="pc-pct"></span>`;
+    return d;
   }
-  const pct = el.querySelector('.pc-pct');
-  if (pct) pct.textContent = Math.round(receiver.progress(m.key) * 100) + '%';
-}
-
-function phoneMediaNode(m, url) {
   if (m.k === 'youtube') {
     const f = document.createElement('iframe');
-    f.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(m.vid)}?autoplay=1&start=${m.start || 0}&rel=0&playsinline=1`;
+    f.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(m.vid)}?autoplay=${autoplay ? 1 : 0}&start=${m.start || 0}&rel=0&playsinline=1`;
     f.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
     f.allowFullscreen = true;
     return f;
@@ -404,17 +310,78 @@ function phoneMediaNode(m, url) {
   const el = document.createElement(m.k === 'audio' ? 'audio' : 'video');
   el.src = url;
   el.controls = true;
-  el.autoplay = true;
   el.playsInline = true;
   el.preload = 'auto';
-  // Phones may block autoplay with sound; the controls stay visible to start it by hand.
-  el.play?.().catch(() => {});
+  if (autoplay) {
+    el.autoplay = true;
+    // Phones may block autoplay with sound; the controls stay visible to start it by hand.
+    el.play?.().catch(() => {});
+  }
   if (m.k !== 'audio') return el;
   const d = document.createElement('div');
   d.className = 'pc-audio';
   d.innerHTML = '<span>🎵</span>';
   d.append(el);
   return d;
+}
+
+function onScreen(type, d = {}) {
+  switch (type) {
+    case 'buzz': return press();
+    case 'pick': return client?.send({ t: 'pick', c: d.c, q: d.q });
+    case 'join': return client?.send({ t: 'team', team: d.team });
+    case 'prefs': return render();
+    case 'link': return confirmLeave(d.name === 'home');
+    case 'form': {
+      if (d.type === 'answer') {
+        const t = String(d.value || '').trim();
+        if (!t) return toast('Напиши ответ');
+        client.send({ t: 'fanswer', text: t });
+        return toast('Ответ отправлен');
+      }
+      const n = Math.round(+d.value);
+      const form = screen.el.querySelector('.p-form input');
+      const min = +(form?.min || 0), max = +(form?.max || 0);
+      if (d.value === '' || !Number.isFinite(n) || n < min || n > max) return toast(`Ставка от ${fmt(min)} до ${fmt(max)}`);
+      client.send({ t: d.key === 'fw' ? 'fwager' : 'wager', amount: n });
+      return toast('Ставка отправлена');
+    }
+  }
+}
+
+function renderPlayer() {
+  if (mounted !== 'player' || !screen) {
+    mounted = 'player';
+    app.innerHTML = '';
+    screen = createScreen(app, {
+      role: 'player',
+      on: onScreen,
+      mediaNode: playerMediaNode,
+      links: () => [{ name: 'leave', label: 'Выйти из комнаты' }, { name: 'home', label: 'На главную' }],
+    });
+  }
+  const v = view;
+  const me = v.me;
+  const c = me.clue;
+  const vw = { ...v.view };
+  if (vw.media) vw.mediaKey = `${vw.mediaKey}|${mediaReady(vw.media) ? 1 : 0}`;
+  const open = v.phase === 'clue' && v.mode === 'buzzer' && c && !c.dd && c.stage === 'open';
+  vw.tap = prefs.buzz === 'tap' && open;
+  const teams = v.teams.map((t) => {
+    if (t.id !== me.team?.id || prefs.buzz !== 'card' || v.phase !== 'clue' || v.mode !== 'buzzer' || c?.dd) return t;
+    const cls = [...t.cls, 'tappable'];
+    if (open && !c.triedMine && pressedOpen !== c.openId) cls.push('live');
+    return { ...t, cls, sub: t.sub, badge: t.badge || (open ? 'жми сюда' : '') };
+  });
+  screen.update({
+    title: v.title,
+    round: v.round,
+    tools: { name: me.name, color: me.team?.color },
+    view: vw,
+    teams,
+    panel: playerPanel(v),
+  });
+  if (vw.media?.key && !mediaReady(vw.media)) screen.setProgress(`${Math.round(receiver.progress(vw.media.key) * 100)}%`);
 }
 
 // ---------- host remote ----------
@@ -464,13 +431,13 @@ function renderRemote() {
   else if (v.phase === 'end') info = `<div class="rm-card"><b>Игра окончена</b></div>`;
   setHTML($('.rm-info', app), info);
   setHTML($('.rm-ctl', app), controlsHTML(v.controls || []));
-  setHTML($('.rm-players', app), `<div class="rm-card"><div class="muted small">Очки (± по 100)</div>${(v.players || []).map((p) => `
-    <div class="rm-p ${p.picker ? 'picker' : ''}">
-      <span class="dot ${p.phone ? (p.online ? 'on' : 'off') : 'none'}"></span>
-      <span class="rm-pn">${esc(p.name)}${p.picker ? ' <small>выбирает</small>' : ''}</span>
-      <b class="${p.score < 0 ? 'neg' : ''}">${fmt(p.score)}</b>
-      <button class="btn small" data-act="adj" data-args='${JSON.stringify({ pid: p.id, delta: -100 })}'>−</button>
-      <button class="btn small" data-act="adj" data-args='${JSON.stringify({ pid: p.id, delta: 100 })}'>+</button>
+  setHTML($('.rm-players', app), `<div class="rm-card"><div class="muted small">Команды (± по 100)</div>${(v.teams || []).map((t) => `
+    <div class="rm-p ${t.picker ? 'picker' : ''}">
+      <span class="dot" style="background:${esc(t.color)}"></span>
+      <span class="rm-pn">${esc(t.name)}${t.picker ? ' <small>выбирает</small>' : ''}${t.members?.length ? `<br><small class="muted">${esc(t.members.join(', '))}</small>` : ''}</span>
+      <b class="${t.score < 0 ? 'neg' : ''}">${fmt(t.score)}</b>
+      <button class="btn small" data-act="adj" data-args='${esc(JSON.stringify({ team: t.id, delta: -100 }))}'>−</button>
+      <button class="btn small" data-act="adj" data-args='${esc(JSON.stringify({ team: t.id, delta: 100 }))}'>+</button>
     </div>`).join('')}</div>`);
   $('.rm-foot [data-act=undo]', app).disabled = !v.canUndo;
 }
@@ -482,16 +449,12 @@ function render() {
   else renderPlayer();
 }
 
-function tick() {
-  const left = deadline ? Math.max(0, deadline - Date.now()) : 0;
-  for (const el of app.querySelectorAll('.bz-timer, .ph-timer span')) el.textContent = left ? Math.ceil(left / 1000) : '';
-  // Unlock the buzzer visuals when a penalty or "too early" flash expires.
-  if (view?.clue && role === 'player') {
-    const b = app.querySelector('.buzzer');
-    if (b && (b.classList.contains('early') && Date.now() - earlyAt > 900 && lockedUntil <= Date.now())) renderPlayer();
-  }
-}
-setInterval(tick, 250);
+// Unlock the buzzer visuals when a penalty or "too early" flash expires.
+setInterval(() => {
+  if (role !== 'player' || !view?.me?.clue) return;
+  if (earlyAt && Date.now() - earlyAt > 900 && Date.now() - earlyAt < 1400) render();
+  if (lockedUntil && Date.now() > lockedUntil && Date.now() - lockedUntil < 400) render();
+}, 250);
 
 app.addEventListener('click', (e) => {
   if (e.target.closest('[data-menu]')) openMenu();
@@ -511,12 +474,12 @@ async function wake() {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible' || !client) return;
-  wake();
+  if (!testN) wake();
   if (!client.conn?.open) client.lost();
 });
 
 if (local) connect();
 else if (!code) codeScreen();
-else if (role === 'host') connect();
+else if (role === 'host' || testN) connect();
 else if (name && store.get('plyukh-pid-' + code)) connect(); // returning to the same room: skip the name step
 else nameScreen();

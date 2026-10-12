@@ -20,7 +20,7 @@ for (const f of fs.readdirSync(rel('js')).filter((f) => f.endsWith('.js'))) {
   if (out !== src) fs.writeFileSync(p, out);
 }
 
-for (const f of ['index.html', 'join/index.html']) {
+for (const f of ['index.html', 'join/index.html', 'test/index.html']) {
   const p = rel(f);
   const src = fs.readFileSync(p, 'utf8');
   const out = src.replace(/((?:src|href)="(?:\.\.\/)?(?:js|css|vendor)\/[\w.-]+\.(?:js|css))(\?v=\d+)?"/g, `$1?v=${v}"`);

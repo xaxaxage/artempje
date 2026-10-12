@@ -400,6 +400,19 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .lp.empty { justify-content: center; padding: 16px; }
 .lp-name { flex: 1; text-align: left; font-weight: 650; }
 .add-player { display: flex; gap: 8px; margin-bottom: 18px; }
+.add-player[hidden] { display: none; }
+.team-mode { display: flex; justify-content: center; gap: 8px; margin: 16px 0 6px; }
+.lobby-teams { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 8px; }
+.lt { display: flex; align-items: flex-start; gap: 12px; text-align: left; background: var(--card); border: 2px solid var(--line); border-left: 6px solid var(--tc); border-radius: 12px; padding: 10px 8px 10px 12px; animation: pop .2s; }
+.lt-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--tc); margin-top: 6px; flex: none; }
+.lt-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.lt-name { all: unset; font-weight: 750; font-size: 1.05rem; cursor: pointer; }
+.lt-name:hover { text-decoration: underline; }
+.lt-members { display: flex; flex-wrap: wrap; gap: 6px; }
+.lp-chip { display: inline-flex; align-items: center; gap: 6px; font: 600 .88rem/1 Inter, system-ui, sans-serif; color: var(--ink); background: var(--bg2); border: 1px solid var(--line); border-radius: 99px; padding: 6px 10px; cursor: pointer; }
+.lp-chip.off { opacity: .55; }
+.lobby-free { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; margin-bottom: 12px; }
+.lobby-free:empty { display: none; }
 .add-player .btn { flex: none; }
 
 /* ---------- game screen ---------- */
