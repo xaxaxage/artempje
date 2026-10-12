@@ -1,8 +1,8 @@
 // Random jump scare. Now and then, when a question opens in a game (or while a board is being made),
-// the lights flicker and go out, and after a pause Foxy (keyed off his green screen in WebGL) jumps out
-// with the scream at full loudness. Then the game is back as if nothing happened.
+// Foxy (keyed off his green screen in WebGL) jumps out of a dark background with the scream at full
+// loudness, no warning. Then the game is back as if nothing happened.
 // The scream (assets/screamer.wav) is normalized and soft-clipped to be as loud as a file can be.
-import { store } from './util.js?v=1791832753377';
+import { store } from './util.js?v=1791832880491';
 
 const VIDEO = new URL('../assets/screamer.mp4', import.meta.url).href;
 const SOUND = new URL('../assets/screamer.wav', import.meta.url).href;
@@ -123,9 +123,8 @@ export function stop() {
   current?.abort();
 }
 
-// The lights flicker and go out; after `wait` ms of darkness, BOO. The overlay then fades away by itself.
-// In a game the host picks `wait`, so every screen screams at the same moment.
-export async function scare({ wait = 900 + Math.random() * 1400 } = {}) {
+// Loads quietly (the overlay stays hidden), then BOO at once. The overlay then fades away by itself.
+export async function scare() {
   if (current) return false;
   prefetch();
   let aborted = false;
@@ -145,32 +144,24 @@ export async function scare({ wait = 900 + Math.random() * 1400 } = {}) {
   const canvas = el.querySelector('canvas');
   const draw = webglKeyer(canvas) || canvasKeyer(canvas);
 
-  const [src, buf] = await Promise.all([videoBlob, decodedSound(), sleep(1500)]); // the flicker runs meanwhile
+  const [src, buf] = await Promise.all([videoBlob, decodedSound()]);
   video.src = src;
-  await Promise.race([new Promise((r) => { video.oncanplaythrough = r; video.onerror = r; }), sleep(4000)]);
-  await sleep(wait);
+  if (!buf) { video.muted = false; video.volume = 1; } // no Web Audio: let the video itself scream
+  // Show it the moment playback starts (phones may ignore preloading, so don't wait for "can play through").
+  await Promise.race([video.play().catch(() => { video.muted = true; return video.play(); }).catch(() => {}), sleep(3000)]);
   if (aborted) return finish(false);
 
   let raf = 0;
   const loop = () => { if (video.readyState >= 2) draw(video); if (!video.ended) raf = requestAnimationFrame(loop); };
-  if (buf) {
-    await video.play().catch(() => {});
-    playSound(buf);
-  } else {
-    video.muted = false; // no Web Audio: let the video itself scream
-    video.volume = 1;
-    await video.play().catch(() => { video.muted = true; return video.play().catch(() => {}); });
-  }
+  if (buf) playSound(buf);
   loop();
   el.classList.add('boo');
   try { navigator.vibrate?.([350, 60, 350, 60, 700]); } catch {}
 
   await sleep(1750);
   cancelAnimationFrame(raf);
-  el.classList.add('over'); // cut to black
-  await sleep(600);
   if (aborted) return finish(false);
   el.classList.add('gone');
-  setTimeout(() => el.remove(), 700);
+  setTimeout(() => el.remove(), 600);
   return finish(true);
 }

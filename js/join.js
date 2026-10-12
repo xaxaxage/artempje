@@ -1,12 +1,12 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791832753377';
-import { VERSION } from './version.js?v=1791832753377';
-import { Client, LocalLink } from './net.js?v=1791832753377';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791832753377';
-import { MediaReceiver } from './mediasync.js?v=1791832753377';
-import { createScreen, prefs } from './gameui.js?v=1791832753377';
-import * as screamer from './screamer.js?v=1791832753377';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791832880491';
+import { VERSION } from './version.js?v=1791832880491';
+import { Client, LocalLink } from './net.js?v=1791832880491';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791832880491';
+import { MediaReceiver } from './mediasync.js?v=1791832880491';
+import { createScreen, prefs } from './gameui.js?v=1791832880491';
+import * as screamer from './screamer.js?v=1791832880491';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -171,7 +171,7 @@ function connect() {
 function onMsg(d) {
   if (receiver.handle(d)) return;
   if (d.t === 'welcome') { pid = d.pid; checkVersion(d.v); screamer.prefetch(); return; }
-  if (d.t === 'scare') { setTimeout(() => screamer.scare({ wait: d.wait }), d.delay); return; } // see js/screamer.js
+  if (d.t === 'scare') { setTimeout(() => screamer.scare(), d.delay); return; } // see js/screamer.js
   if (d.t === 'denied') { client.stop(); return messageScreen('Ссылка пульта устарела', 'Открой новую ссылку из меню игры на экране ведущего'); }
   if (d.t === 'kicked') { client.stop(); store.del('plyukh-pid-' + code); return messageScreen('Ты вне игры', 'Ведущий убрал тебя из этой комнаты', true); }
   if (d.t !== 'state' && d.t !== 'hstate') return;

@@ -1,9 +1,9 @@
 // Test bench: the host screen and a few fake players side by side, so one person can try a whole game.
 // The host frame creates a room and reports its code; each player frame then joins it with its own id.
-import * as db from './db.js?v=1791832753377';
-import { esc, store } from './util.js?v=1791832753377';
-import { stats } from './board.js?v=1791832753377';
-import { exampleBoard } from './examples.js?v=1791832753377';
+import * as db from './db.js?v=1791832880491';
+import { esc, store } from './util.js?v=1791832880491';
+import { stats } from './board.js?v=1791832880491';
+import { exampleBoard } from './examples.js?v=1791832880491';
 
 const NAMES = ['Вася', 'Маша', 'Петя', 'Оля'];
 const $ = (s) => document.querySelector(s);

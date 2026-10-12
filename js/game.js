@@ -1,17 +1,17 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1791832753377';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1791832753377';
-import { filled, finalReady, roundPlayable } from './board.js?v=1791832753377';
-import { mediaEl, kindOf } from './media.js?v=1791832753377';
-import { play as sfx, sound, unlock } from './sound.js?v=1791832753377';
-import { Host, errText, hostChannelName } from './net.js?v=1791832753377';
-import { setHTML } from './controls.js?v=1791832753377';
-import { saveGame } from './history.js?v=1791832753377';
-import { MediaSender, describe } from './mediasync.js?v=1791832753377';
-import { VERSION } from './version.js?v=1791832753377';
-import { createScreen } from './gameui.js?v=1791832753377';
-import * as screamer from './screamer.js?v=1791832753377';
+import * as db from './db.js?v=1791832880491';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1791832880491';
+import { filled, finalReady, roundPlayable } from './board.js?v=1791832880491';
+import { mediaEl, kindOf } from './media.js?v=1791832880491';
+import { play as sfx, sound, unlock } from './sound.js?v=1791832880491';
+import { Host, errText, hostChannelName } from './net.js?v=1791832880491';
+import { setHTML } from './controls.js?v=1791832880491';
+import { saveGame } from './history.js?v=1791832880491';
+import { MediaSender, describe } from './mediasync.js?v=1791832880491';
+import { VERSION } from './version.js?v=1791832880491';
+import { createScreen } from './gameui.js?v=1791832880491';
+import * as screamer from './screamer.js?v=1791832880491';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare' };
@@ -31,6 +31,7 @@ export async function startPlay(root, boardId) {
   const SAVE_KEY = autotest ? 'plyukh-game-test' : 'plyukh-game';
 
   const settings = { ...DEFAULTS, ...store.get(SETTINGS_KEY, {}) };
+  if (settings.scare !== 'off') screamer.prefetch(); // so the scare can pop up the moment it's due
   sound.on = settings.sound;
   let S = null; // game state (serialisable)
   let net = null;
@@ -803,8 +804,8 @@ export async function startPlay(root, boardId) {
   }
 
   // ---------- jump scare (js/screamer.js) ----------
-  // Now and then, while a fresh question is being read, the lights go out on every screen at once
-  // and Foxy screams. Never in the first couple of questions or twice in a row.
+  // Now and then, while a fresh question is being read, Foxy jumps out on every screen at once.
+  // Never in the first couple of questions or twice in a row.
   let picksSinceScare = 0;
   function maybeScare() {
     if (++picksSinceScare < 3 || !(Math.random() < (screamer.CHANCE[settings.scare] || 0))) return;
@@ -812,10 +813,10 @@ export async function startPlay(root, boardId) {
   }
   function scareAll(delay = 1200 + Math.random() * 1800) {
     picksSinceScare = 0;
-    const msg = { t: 'scare', delay, wait: 900 + Math.random() * 1400 };
+    const msg = { t: 'scare', delay };
     if (chan && hostWinOpen()) chan.postMessage(msg);
     if (net) for (const conn of conns.values()) net.send(conn, msg);
-    setTimeout(() => { if (!destroyed) screamer.scare({ wait: msg.wait }); }, delay);
+    setTimeout(() => { if (!destroyed) screamer.scare(); }, delay);
   }
 
   // ---------- host window on this computer ----------
@@ -1045,7 +1046,7 @@ export async function startPlay(root, boardId) {
       <label class="set-row"><span>Текст вопроса и ответ у игроков</span><input type="checkbox" data-set="phoneText" ${settings.phoneText ? 'checked' : ''}></label>
       <label class="set-row"><span>Звуки</span><input type="checkbox" data-set="sound" ${settings.sound ? 'checked' : ''}></label>
       <label class="set-row"><span>Штраф за фальстарт <small class="muted">(нажал раньше времени — кнопка блокируется на 1 сек)</small></span><input type="checkbox" data-set="penalty" ${settings.penalty ? 'checked' : ''}></label>
-      <label class="set-row"><span>Скример 👻 <small class="muted">(иногда, пока читают вопрос, гаснет свет… у всех сразу. И в редакторе досок тоже)</small></span><select class="input small" data-set="scare" data-str>${opt('off', settings.scare, 'выкл')}${opt('rare', settings.scare, 'редко')}${opt('often', settings.scare, 'часто')}</select></label>`;
+      <label class="set-row"><span>Скример 👻 <small class="muted">(иногда, пока читают вопрос, выскакивает у всех сразу. И в редакторе досок тоже)</small></span><select class="input small" data-set="scare" data-str>${opt('off', settings.scare, 'выкл')}${opt('rare', settings.scare, 'редко')}${opt('often', settings.scare, 'часто')}</select></label>`;
   }
   function bindSettings(el) {
     el.querySelectorAll('[data-set]').forEach((i) => i.addEventListener('change', () => {
