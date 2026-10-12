@@ -5,7 +5,12 @@ const PREFIX = 'plyukh-room-v1-';
 const PING_MS = 3000;
 const DEAD_MS = 11000;
 
-export const randomCode = () => String(Math.floor(1000 + Math.random() * 9000));
+// 6666 is the screamer trap on the join page (js/screamer.js), never a real room.
+export function randomCode() {
+  let c;
+  do c = String(Math.floor(1000 + Math.random() * 9000)); while (c === '6666');
+  return c;
+}
 
 const ERR_TEXT = {
   'browser-incompatible': 'Этот браузер не поддерживает WebRTC',

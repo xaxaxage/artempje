@@ -1,16 +1,16 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1791812190596';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1791812190596';
-import { filled, finalReady, roundPlayable } from './board.js?v=1791812190596';
-import { mediaEl, kindOf } from './media.js?v=1791812190596';
-import { play as sfx, sound, unlock } from './sound.js?v=1791812190596';
-import { Host, errText, hostChannelName } from './net.js?v=1791812190596';
-import { setHTML } from './controls.js?v=1791812190596';
-import { saveGame } from './history.js?v=1791812190596';
-import { MediaSender, describe } from './mediasync.js?v=1791812190596';
-import { VERSION } from './version.js?v=1791812190596';
-import { createScreen } from './gameui.js?v=1791812190596';
+import * as db from './db.js?v=1791831883056';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1791831883056';
+import { filled, finalReady, roundPlayable } from './board.js?v=1791831883056';
+import { mediaEl, kindOf } from './media.js?v=1791831883056';
+import { play as sfx, sound, unlock } from './sound.js?v=1791831883056';
+import { Host, errText, hostChannelName } from './net.js?v=1791831883056';
+import { setHTML } from './controls.js?v=1791831883056';
+import { saveGame } from './history.js?v=1791831883056';
+import { MediaSender, describe } from './mediasync.js?v=1791831883056';
+import { VERSION } from './version.js?v=1791831883056';
+import { createScreen } from './gameui.js?v=1791831883056';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all' };
