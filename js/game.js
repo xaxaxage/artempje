@@ -1,15 +1,15 @@
 // The host screen: setup, lobby, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1791765324024';
-import { $, esc, nl2br, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, LOGO_SVG, siteUpdatedBanner } from './util.js?v=1791765324024';
-import { filled, finalReady, roundPlayable } from './board.js?v=1791765324024';
-import { mediaEl } from './media.js?v=1791765324024';
-import { play as sfx, sound, unlock } from './sound.js?v=1791765324024';
-import { Host, errText, hostChannelName } from './net.js?v=1791765324024';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791765324024';
-import { saveGame } from './history.js?v=1791765324024';
-import { MediaSender, describe } from './mediasync.js?v=1791765324024';
-import { VERSION } from './version.js?v=1791765324024';
+import * as db from './db.js?v=1791789810288';
+import { $, esc, nl2br, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, LOGO_SVG, siteUpdatedBanner } from './util.js?v=1791789810288';
+import { filled, finalReady, roundPlayable } from './board.js?v=1791789810288';
+import { mediaEl } from './media.js?v=1791789810288';
+import { play as sfx, sound, unlock } from './sound.js?v=1791789810288';
+import { Host, errText, hostChannelName } from './net.js?v=1791789810288';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791789810288';
+import { saveGame } from './history.js?v=1791789810288';
+import { MediaSender, describe } from './mediasync.js?v=1791789810288';
+import { VERSION } from './version.js?v=1791789810288';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const SAVE_KEY = 'plyukh-game';
@@ -1217,6 +1217,7 @@ export async function startPlay(root, boardId) {
         ...(usesPhones() ? [{ label: 'Ведущий с телефона (QR)', value: 'remote' }] : []),
         { label: 'Добавить игрока', value: 'add' },
         ...(['board', 'clue'].includes(S.phase) ? [{ label: 'Завершить раунд досрочно', value: 'endRound' }] : []),
+        { label: 'Выйти на главную', value: 'exit' },
         { label: 'Начать заново', value: 'restart', cls: 'danger' },
         { label: 'Готово', value: null, cls: 'primary' },
       ],
@@ -1232,6 +1233,7 @@ export async function startPlay(root, boardId) {
       }
     }
     if (r === 'endRound' && (await confirmDlg('Закончить раунд? Оставшиеся вопросы пропадут.', 'Закончить'))) act('endRound');
+    if (r === 'exit') return uiAction('exit');
     if (r === 'restart' && (await confirmDlg('Начать игру заново? Все очки обнулятся.', 'Заново', true))) {
       hist = [];
       beginGame();

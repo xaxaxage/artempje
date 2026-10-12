@@ -1,7 +1,7 @@
-import * as db from './db.js?v=1791765324024';
-import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1791765324024';
-import { newClue, newRound, filled } from './board.js?v=1791765324024';
-import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1791765324024';
+import * as db from './db.js?v=1791789810288';
+import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1791789810288';
+import { newClue, newRound, filled } from './board.js?v=1791789810288';
+import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1791789810288';
 
 export async function renderEditor(root, id) {
   const board = await db.getBoard(id);

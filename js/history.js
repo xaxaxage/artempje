@@ -1,5 +1,5 @@
 // Results of finished games, kept in this browser.
-import { store } from './util.js?v=1791765324024';
+import { store } from './util.js?v=1791789810288';
 
 const KEY = 'plyukh-history';
 

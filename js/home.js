@@ -1,9 +1,9 @@
-import * as db from './db.js?v=1791765324024';
-import { esc, uid, fmt, toast, dialog, confirmDlg, promptDlg, download, pickFile, safeFileName, store, plural, LOGO_SVG } from './util.js?v=1791765324024';
-import { newBoard, mediaRefs, stats, normalize, finalReady, allClues } from './board.js?v=1791765324024';
-import { toPortable, fromPortable, copyRef, dropRef } from './media.js?v=1791765324024';
-import { exampleBoard } from './examples.js?v=1791765324024';
-import { listHistory, removeGame, clearHistory } from './history.js?v=1791765324024';
+import * as db from './db.js?v=1791789810288';
+import { esc, uid, fmt, toast, dialog, confirmDlg, promptDlg, download, pickFile, safeFileName, store, plural, LOGO_SVG } from './util.js?v=1791789810288';
+import { newBoard, mediaRefs, stats, normalize, finalReady, allClues } from './board.js?v=1791789810288';
+import { toPortable, fromPortable, copyRef, dropRef } from './media.js?v=1791789810288';
+import { exampleBoard } from './examples.js?v=1791789810288';
+import { listHistory, removeGame, clearHistory } from './history.js?v=1791789810288';
 
 const MODE_NAMES = { simple: 'Простой режим', buzzer: 'С кнопками' };
 
@@ -17,7 +17,12 @@ export async function renderHome(root) {
   root.innerHTML = `
     <header class="site-head">
       <a class="logo" href="#/">${LOGO_SVG}<span>Плюх</span></a>
-      <nav><a class="btn small" href="join/">Войти в игру по коду</a></nav>
+      <nav class="site-nav">
+        <button class="nav-link" data-a="goto" data-sec="boards">Мои игры</button>
+        <button class="nav-link" data-a="goto" data-sec="gallery">Готовые игры</button>
+        <button class="nav-link" data-a="goto" data-sec="history">История</button>
+        <a class="btn small" href="join/">Войти в игру по коду</a>
+      </nav>
     </header>
     <section class="hero">
       <h1>Своя игра с друзьями</h1>
@@ -92,6 +97,9 @@ export async function renderHome(root) {
     if (!btn) return;
     const id = btn.closest('[data-id]')?.dataset.id;
     switch (btn.dataset.a) {
+      case 'goto':
+        root.querySelector(`.${btn.dataset.sec}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
       case 'new': {
         const title = await promptDlg('Как назовём игру?', '', { placeholder: 'Например: Днюха Димы', ok: 'Создать' });
         if (title == null) return;

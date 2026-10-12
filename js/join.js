@@ -1,9 +1,9 @@
 // Phone page: a player's buzzer, or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, LOGO_SVG } from './util.js?v=1791765324024';
-import { VERSION } from './version.js?v=1791765324024';
-import { Client, LocalLink } from './net.js?v=1791765324024';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791765324024';
-import { MediaReceiver } from './mediasync.js?v=1791765324024';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791789810288';
+import { VERSION } from './version.js?v=1791789810288';
+import { Client, LocalLink } from './net.js?v=1791789810288';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791789810288';
+import { MediaReceiver } from './mediasync.js?v=1791789810288';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -42,10 +42,46 @@ function pidFor(c) {
   return p;
 }
 
+// ---------- navigation ----------
+const homeLink = '<a class="back-link" href="../">← На главную</a>';
+
+// Leaves the room: back to the code screen, or to the home page.
+function leave(home = false) {
+  client?.stop();
+  client = null;
+  view = null;
+  mounted = false;
+  document.getElementById('banner')?.remove();
+  if (home || role === 'host') { location.href = '../'; return; }
+  code = '';
+  history.replaceState(null, '', location.pathname);
+  codeScreen();
+}
+
+async function openMenu() {
+  const player = role === 'player';
+  const r = await dialog({
+    title: player ? `Комната ${code}` : local ? 'Окно ведущего' : 'Пульт ведущего',
+    cls: 'menu-dlg',
+    buttons: [
+      ...(player ? [{ label: 'Выйти из комнаты', value: 'leave' }] : []),
+      { label: 'На главную', value: 'home' },
+      { label: 'Отмена', value: null, cls: 'ghost' },
+    ],
+  });
+  if (!r) return;
+  const playing = player && view && !['lobby', 'end'].includes(view.phase);
+  if (playing && !(await confirmDlg('Выйти из игры? Очки сохранятся — можно вернуться по тому же коду.', 'Выйти'))) return;
+  leave(r === 'home');
+}
+
+const menuButton = '<button type="button" class="ph-menu" data-menu aria-label="Меню">☰</button>';
+
 // ---------- entry screens ----------
 function codeScreen(err = '') {
   mounted = false;
   app.innerHTML = `<div class="ph-center">
+    ${homeLink}
     ${logo}
     <h1>Вход в игру</h1>
     <p class="muted">Введи код комнаты с экрана ведущего</p>
@@ -70,6 +106,7 @@ function codeScreen(err = '') {
 function nameScreen() {
   mounted = false;
   app.innerHTML = `<div class="ph-center">
+    ${homeLink}
     ${logo}
     <div class="room-code small">${esc(code)}</div>
     <p class="muted">Как тебя зовут?</p>
@@ -88,12 +125,12 @@ function nameScreen() {
     store.set('plyukh-name', name);
     connect();
   });
-  $('[data-other]', app).addEventListener('click', () => { code = ''; codeScreen(); });
+  $('[data-other]', app).addEventListener('click', () => leave());
 }
 
 function messageScreen(title, text, retry = false) {
   mounted = false;
-  app.innerHTML = `<div class="ph-center">${logo}<h1>${esc(title)}</h1><p class="muted">${esc(text)}</p>
+  app.innerHTML = `<div class="ph-center">${homeLink}${logo}<h1>${esc(title)}</h1><p class="muted">${esc(text)}</p>
     ${retry ? '<button class="btn primary big wide" data-retry>Войти снова</button>' : ''}</div>`;
   $('[data-retry]', app)?.addEventListener('click', () => { code = ''; history.replaceState(null, '', '?'); codeScreen(); });
 }
@@ -102,7 +139,9 @@ function connect() {
   pid = role === 'host' ? 'host' : pidFor(code);
   mounted = false;
   view = null;
-  app.innerHTML = `<div class="ph-center">${logo}<div class="connecting"><div class="spinner"></div>${local ? 'Подключаемся к экрану игры…' : `Подключаемся к комнате ${esc(code)}…`}</div></div>`;
+  app.innerHTML = `<div class="ph-center">${homeLink}${logo}<div class="connecting"><div class="spinner"></div>${local ? 'Подключаемся к экрану игры…' : `Подключаемся к комнате ${esc(code)}…`}</div>
+    <button type="button" class="link-btn" data-cancel>${role === 'player' ? 'Отмена — ввести другой код' : 'Отмена'}</button></div>`;
+  $('[data-cancel]', app).addEventListener('click', () => leave());
   const handlers = {
     onOpen: () => client.send({ t: 'hello', role, pid, name, key: hostKey, have: receiver.keys(), v: VERSION }),
     onData: onMsg,
@@ -231,7 +270,7 @@ function wagerForm(kind, min, max, value, label) {
 function mountPlayer() {
   mounted = 'player';
   app.innerHTML = `<div class="ph-game">
-    <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>Плюх</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span></header>
+    <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>Плюх</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span>${menuButton}</header>
     <div class="ph-status"><div class="ph-title"></div><div class="ph-sub"></div></div>
     <div class="ph-clue"></div>
     <div class="ph-main"></div>
@@ -382,7 +421,7 @@ function phoneMediaNode(m, url) {
 function mountRemote() {
   mounted = 'remote';
   app.innerHTML = `<div class="rm">
-    <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>${local ? 'Окно ведущего' : 'Пульт'}</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span></header>
+    <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>${local ? 'Окно ведущего' : 'Пульт'}</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span>${menuButton}</header>
     ${local ? '<p class="rm-warn">Это окно не показывай игрокам: в Discord выбирай «Окно» с игрой, а не весь экран.</p>' : ''}
     <div class="rm-info"></div>
     <div class="rm-ctl"></div>
@@ -454,8 +493,12 @@ function tick() {
 }
 setInterval(tick, 250);
 
+app.addEventListener('click', (e) => {
+  if (e.target.closest('[data-menu]')) openMenu();
+});
+
 document.addEventListener('keydown', (e) => {
-  if (e.code === 'Space' && role === 'player' && mounted === 'player' && !e.target.closest('input, textarea')) {
+  if (e.code === 'Space' && role === 'player' && mounted === 'player' && !e.target.closest('input, textarea') && !document.querySelector('.dlg-wrap')) {
     e.preventDefault();
     if (!e.repeat) press();
   }
