@@ -1,13 +1,17 @@
 // Phone page: a player's buzzer, or the host's remote when opened with ?k=<host key>.
-import { $, esc, fmt, signed, store, uid, toast, LOGO_SVG } from './util.js';
-import { Client } from './net.js';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, LOGO_SVG } from './util.js';
+import { Client, LocalLink } from './net.js';
 import { controlsHTML, bindControls, setHTML } from './controls.js';
+import { MediaReceiver } from './mediasync.js';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
 let code = (params.get('r') || '').replace(/\D/g, '').slice(0, 4);
 const hostKey = params.get('k') || '';
 const role = hostKey ? 'host' : 'player';
+// Host window opened from the game screen on the same computer (no room code, no network).
+const local = role === 'host' && params.get('local') === '1';
+if (local) document.title = 'Окно ведущего — Плюх';
 
 let client = null;
 let view = null;
@@ -20,6 +24,13 @@ let pressedOpen = 0;
 let earlyAt = 0;
 let lockedUntil = 0;
 let deadline = 0;
+
+// Clue media streamed from the host; kept for the whole visit, so reconnects don't download it again.
+let mediaRaf = 0;
+const receiver = new MediaReceiver(() => {
+  if (mediaRaf || mounted !== 'player') return;
+  mediaRaf = requestAnimationFrame(() => { mediaRaf = 0; if (view) renderClue(view); });
+});
 
 const logo = `<a class="logo" href="../">${LOGO_SVG}<span>Плюх</span></a>`;
 
@@ -90,18 +101,20 @@ function connect() {
   pid = role === 'host' ? 'host' : pidFor(code);
   mounted = false;
   view = null;
-  app.innerHTML = `<div class="ph-center">${logo}<div class="connecting"><div class="spinner"></div>Подключаемся к комнате ${esc(code)}…</div></div>`;
-  client = new Client(code, {
-    onOpen: () => client.send({ t: 'hello', role, pid, name, key: hostKey }),
+  app.innerHTML = `<div class="ph-center">${logo}<div class="connecting"><div class="spinner"></div>${local ? 'Подключаемся к экрану игры…' : `Подключаемся к комнате ${esc(code)}…`}</div></div>`;
+  const handlers = {
+    onOpen: () => client.send({ t: 'hello', role, pid, name, key: hostKey, have: receiver.keys() }),
     onData: onMsg,
     onStatus: (s) => { app.dataset.net = s; },
     onNoRoom: () => { client = null; codeScreen(`Комната ${code} не найдена. Проверь код на экране`); },
-  });
+  };
+  client = local ? new LocalLink(hostKey, handlers) : new Client(code, handlers);
   client.connect();
-  wake();
+  if (!local) wake();
 }
 
 function onMsg(d) {
+  if (receiver.handle(d)) return;
   if (d.t === 'welcome') { pid = d.pid; return; }
   if (d.t === 'denied') { client.stop(); return messageScreen('Ссылка пульта устарела', 'Открой новую ссылку из меню игры на экране ведущего'); }
   if (d.t === 'kicked') { client.stop(); store.del('plyukh-pid-' + code); return messageScreen('Ты вне игры', 'Ведущий убрал тебя из этой комнаты', true); }
@@ -160,7 +173,7 @@ function status(v) {
     case 'roundEnd': return ['Раунд завершён', 'Промежуточные итоги'];
     case 'final':
       if (f.stage === 'wager') return [`Финал: ${f.cat || ''}`, f.wager != null ? `Ставка принята: ${fmt(f.wager)}. Можно поменять, пока не показали вопрос` : `Сколько ставишь? От 0 до ${fmt(f.max)}`];
-      if (f.stage === 'clue') return ['Финальный вопрос — на экране', f.answer != null ? 'Ответ отправлен. Можно исправить, пока идёт время' : 'Напиши ответ и отправь'];
+      if (f.stage === 'clue') return ['Финальный вопрос', f.answer != null ? 'Ответ отправлен. Можно исправить, пока идёт время' : 'Напиши ответ и отправь'];
       return ['Ведущий проверяет ответы', f.judged == null ? `Твой ответ: «${f.answer || '—'}», ставка ${fmt(f.wager || 0)}` : f.judged ? `Верно! ${signed(f.wager || 0)}` : `Неверно: ${signed(-(f.wager || 0))}`];
     case 'end': {
       const place = (v.standings || []).findIndex((s) => s.me) + 1;
@@ -199,9 +212,13 @@ function mountPlayer() {
   app.innerHTML = `<div class="ph-game">
     <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>Плюх</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span></header>
     <div class="ph-status"><div class="ph-title"></div><div class="ph-sub"></div></div>
+    <div class="ph-clue"></div>
     <div class="ph-main"></div>
     <footer class="ph-foot"><span class="ph-name"></span><span class="ph-score"></span></footer>
   </div>`;
+  $('.ph-clue', app).addEventListener('click', (e) => {
+    if (e.target.closest('.pc-media img')) e.target.closest('.pc-media').classList.toggle('zoom');
+  });
   const main = $('.ph-main', app);
   main.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.buzzer')) { e.preventDefault(); press(); }
@@ -255,6 +272,7 @@ function renderPlayer() {
   $('.ph-name', app).textContent = v.you?.name || name;
   $('.ph-score', app).textContent = fmt(v.you?.score || 0);
   $('.ph-score', app).classList.toggle('neg', (v.you?.score || 0) < 0);
+  renderClue(v);
   const m = mainBlock(v);
   const main = $('.ph-main', app);
   if (main.dataset.key !== m.key) {
@@ -276,11 +294,75 @@ function renderPlayer() {
   tick();
 }
 
+// ---------- the clue itself: media, text, answer ----------
+const KIND_WORD = { image: 'картинку', audio: 'аудио', video: 'видео' };
+
+function renderClue(v) {
+  const box = $('.ph-clue', app);
+  const show = (v.phase === 'clue' && v.clue?.show) || (v.phase === 'final' && v.fin?.show) || null;
+  const has = !!(show && (show.media || show.text || show.answer));
+  $('.ph-game', app).classList.toggle('has-clue', has);
+  if (!has) {
+    if (box.firstChild) box.innerHTML = ''; // also stops any playing audio/video
+    return;
+  }
+  if (!box.firstChild) box.innerHTML = '<div class="pc-media"></div><div class="pc-text"></div><div class="pc-ans"></div>';
+  drawMedia($('.pc-media', box), show.media);
+  setHTML($('.pc-text', box), show.text ? nl2br(show.text) : '');
+  setHTML($('.pc-ans', box), show.answer ? `Ответ: <b>${nl2br(show.answer)}</b>` : '');
+}
+
+function drawMedia(el, m) {
+  const url = m?.key ? receiver.url(m.key) : m?.url || null;
+  const ready = m && (m.k === 'youtube' || url);
+  const k = m ? `${m.key || m.url || `yt:${m.vid}:${m.start}`}|${ready ? 1 : 0}` : '';
+  if (el._mk !== k) {
+    el._mk = k;
+    el.classList.remove('zoom');
+    el.innerHTML = '';
+    if (m && !ready) el.innerHTML = `<div class="pc-loading">Загружаем ${KIND_WORD[m.k] || 'файл'}… <span class="pc-pct"></span></div>`;
+    else if (m) el.append(phoneMediaNode(m, url));
+  }
+  const pct = el.querySelector('.pc-pct');
+  if (pct) pct.textContent = Math.round(receiver.progress(m.key) * 100) + '%';
+}
+
+function phoneMediaNode(m, url) {
+  if (m.k === 'youtube') {
+    const f = document.createElement('iframe');
+    f.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(m.vid)}?autoplay=1&start=${m.start || 0}&rel=0&playsinline=1`;
+    f.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture';
+    f.allowFullscreen = true;
+    return f;
+  }
+  if (m.k === 'image') {
+    const img = new Image();
+    img.alt = '';
+    img.src = url;
+    return img;
+  }
+  const el = document.createElement(m.k === 'audio' ? 'audio' : 'video');
+  el.src = url;
+  el.controls = true;
+  el.autoplay = true;
+  el.playsInline = true;
+  el.preload = 'auto';
+  // Phones may block autoplay with sound; the controls stay visible to start it by hand.
+  el.play?.().catch(() => {});
+  if (m.k !== 'audio') return el;
+  const d = document.createElement('div');
+  d.className = 'pc-audio';
+  d.innerHTML = '<span>🎵</span>';
+  d.append(el);
+  return d;
+}
+
 // ---------- host remote ----------
 function mountRemote() {
   mounted = 'remote';
   app.innerHTML = `<div class="rm">
-    <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>Пульт</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span></header>
+    <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>${local ? 'Окно ведущего' : 'Пульт'}</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span></header>
+    ${local ? '<p class="rm-warn">Это окно не показывай игрокам: в Discord выбирай «Окно» с игрой, а не весь экран.</p>' : ''}
     <div class="rm-info"></div>
     <div class="rm-ctl"></div>
     <div class="rm-players"></div>
@@ -369,7 +451,8 @@ document.addEventListener('visibilitychange', () => {
   if (!client.conn?.open) client.lost();
 });
 
-if (!code) codeScreen();
+if (local) connect();
+else if (!code) codeScreen();
 else if (role === 'host') connect();
 else if (name && store.get('plyukh-pid-' + code)) connect(); // returning to the same room: skip the name step
 else nameScreen();

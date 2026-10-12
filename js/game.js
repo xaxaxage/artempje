@@ -5,13 +5,14 @@ import { $, esc, nl2br, uid, fmt, signed, clamp, store, toast, dialog, dialogOpe
 import { filled, finalReady, roundPlayable } from './board.js';
 import { mediaEl } from './media.js';
 import { play as sfx, sound, unlock } from './sound.js';
-import { Host, errText } from './net.js';
+import { Host, errText, hostChannelName } from './net.js';
 import { controlsHTML, bindControls, setHTML } from './controls.js';
 import { saveGame } from './history.js';
+import { MediaSender, describe } from './mediasync.js';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const SAVE_KEY = 'plyukh-game';
-const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30 };
+const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, hostAnswer: false };
 const BUZZ_WINDOW_MS = 220;
 
 export async function startPlay(root, boardId) {
@@ -25,6 +26,7 @@ export async function startPlay(root, boardId) {
   sound.on = settings.sound;
   let S = null; // game state (serialisable)
   let net = null;
+  let sender = null; // streams clue media to phones
   const conns = new Map(); // player id -> connection
   const hostConns = new Set(); // phone remotes of the host
   const locks = {}; // player id -> timestamp until which buzzing is blocked
@@ -404,6 +406,7 @@ export async function startPlay(root, boardId) {
     if (old && old !== conn) { old._replaced = true; try { old.close(); } catch {} }
     conn._pid = p.id;
     conns.set(p.id, conn);
+    if (Array.isArray(d.have)) sender?.have(conn, d.have);
     net.send(conn, { t: 'welcome', pid: p.id });
     commit();
   }
@@ -470,15 +473,22 @@ export async function startPlay(root, boardId) {
         ddMe: c.dd && c.ddPlayer === pid, ddName: c.dd ? player(c.ddPlayer)?.name || null : null, wager: c.wager,
         wagerReq: c.stage === 'ddIntro' && c.ddPlayer === pid && p ? ddRange(p) : null,
       };
+      if (c.stage !== 'ddIntro') {
+        const cl = clueAt(c);
+        const ans = c.stage === 'answer';
+        v.clue.show = phoneShow(ans && cl.aMedia ? cl.aMedia : cl.media, cl.q, ans ? cl.a : '');
+      }
     }
     if (S.phase === 'final' && S.fin) {
       const f = S.fin;
+      const fc = board.final;
       v.fin = {
-        stage: f.stage, cat: board.final.category,
+        stage: f.stage, cat: fc.category,
         max: Math.max(0, p?.score || 0), wager: f.wagers[pid] ?? null, answer: f.answers[pid] ?? null,
         remainMs: f.stage === 'clue' && f.deadline ? f.deadline - Date.now() : 0,
         judged: f.judged[pid] ?? null,
       };
+      if (f.stage !== 'wager') v.fin.show = phoneShow(f.showAnswer && fc.aMedia ? fc.aMedia : fc.media, fc.q, f.showAnswer ? fc.a : '');
     }
     if (['roundEnd', 'end'].includes(S.phase)) v.standings = standings().map((x) => ({ name: x.name, score: x.score, me: x.id === pid }));
     return v;
@@ -502,24 +512,113 @@ export async function startPlay(root, boardId) {
     };
   }
 
+  // What phones show of the current clue; the toggles in settings decide how much.
+  function phoneShow(ref, q, a) {
+    return {
+      media: settings.phoneMedia ? describe(ref) : null,
+      text: settings.phoneText ? String(q || '').slice(0, 2000) : '',
+      answer: settings.phoneText ? String(a || '').slice(0, 500) : '',
+    };
+  }
+
+  // The media phones show right now (it gets sent first).
+  function phoneRef() {
+    const c = S.clue;
+    if (S.phase === 'clue' && c && c.stage !== 'ddIntro') {
+      const cl = clueAt(c);
+      return c.stage === 'answer' && cl.aMedia ? cl.aMedia : cl.media;
+    }
+    if (S.phase === 'final' && S.fin && S.fin.stage !== 'wager') {
+      const fc = board.final;
+      return S.fin.showAnswer && fc.aMedia ? fc.aMedia : fc.media;
+    }
+    return null;
+  }
+
+  // Media of the clues still ahead, so phones have them before the clue is opened.
+  function upcomingRefs() {
+    const out = [];
+    const add = (i) => board.rounds[i]?.categories.forEach((cat, ci) => cat.clues.forEach((cl, qi) => {
+      if (filled(cl) && !S.used[keyOf(i, ci, qi)]) out.push(cl.media, cl.aMedia);
+    }));
+    if (['setup', 'lobby'].includes(S.phase)) add(firstRound());
+    else if (['board', 'clue', 'roundEnd'].includes(S.phase)) add(S.round);
+    if (S.phase === 'roundEnd') add(nextRoundIndex());
+    if (finalReady(board) && S.phase !== 'end') out.push(board.final.media, board.final.aMedia);
+    return out.filter(Boolean);
+  }
+
+  function syncMedia(conn) {
+    if (!sender || !settings.phoneMedia) return;
+    const cur = phoneRef();
+    if (cur) sender.want(conn, cur, true);
+    for (const ref of upcomingRefs()) sender.want(conn, ref);
+  }
+
   function sendTo(pid) {
     const conn = conns.get(pid);
     if (conn) net.send(conn, playerView(pid));
   }
   let bcQueued = false;
   function broadcast() {
-    if (!net || bcQueued) return;
+    if (bcQueued) return;
     bcQueued = true;
     queueMicrotask(() => {
       bcQueued = false;
+      if (destroyed) return;
+      if (chan && hostWinOpen()) chan.postMessage(hostView());
+      if (!net) return;
       for (const pid of conns.keys()) sendTo(pid);
+      for (const conn of conns.values()) syncMedia(conn);
       if (hostConns.size) { const hv = hostView(); for (const c of hostConns) net.send(c, hv); }
     });
+  }
+
+  // ---------- host window on this computer ----------
+  // Shows the answers in a separate browser window: share only the game window in Discord
+  // and the players never see them.
+  let chan = null;
+  let hostWinSeen = 0;
+  let hostWinShown = false;
+  const hostWinOpen = () => Date.now() - hostWinSeen < 5000;
+  const hostWinUrl = () => new URL(`join/?k=${S.hostKey}&local=1`, location.href.split('#')[0]).href;
+
+  function syncChannel() {
+    if (!S || !('BroadcastChannel' in window)) return;
+    const name = hostChannelName(S.hostKey);
+    if (chan?.name === name) return;
+    chan?.close();
+    chan = new BroadcastChannel(name);
+    chan.onmessage = (e) => {
+      const d = e.data;
+      if (!d || typeof d !== 'object' || destroyed) return;
+      hostWinSeen = Date.now();
+      if (d.t === 'hello' || d.t === 'ping') chan.postMessage(hostView());
+      else if (d.t === 'act' && A[d.a]) act(d.a, d.args || {});
+      if (!hostWinShown) { hostWinShown = true; render(); }
+    };
+  }
+
+  function openHostWindow() {
+    syncChannel();
+    const url = hostWinUrl();
+    const w = window.open(url, hostChannelName(S.hostKey), 'popup=yes,width=460,height=860');
+    if (!w) {
+      dialog({
+        title: 'Окно ведущего',
+        html: `<p>Браузер не дал открыть окно. Разреши всплывающие окна для этого сайта или открой ссылку сам в <b>отдельном окне</b> (не во вкладке):</p><input class="input" value="${esc(url)}" readonly>`,
+        buttons: [{ label: 'Скопировать', value: () => { copyText(url); } }, { label: 'Закрыть', value: true, cls: 'primary' }],
+      });
+      return;
+    }
+    w.focus();
+    toast('В Discord показывай только окно с игрой, а не весь экран');
   }
 
   function commit() {
     if (destroyed) return;
     if (S.phase === 'end') recordHistory();
+    syncChannel();
     persist();
     render();
     broadcast();
@@ -677,7 +776,10 @@ export async function startPlay(root, boardId) {
       <label class="set-row"><span>Таймер на ответ</span><select class="input small" data-set="timer">${[0, 10, 15, 20, 30, 45].map((v) => opt(v, settings.timer, v ? `${v} сек` : 'выкл')).join('')}</select></label>
       <label class="set-row"><span>Таймер в финале</span><select class="input small" data-set="finalTimer">${[0, 30, 45, 60, 90].map((v) => opt(v, settings.finalTimer, v ? `${v} сек` : 'выкл')).join('')}</select></label>
       <label class="set-row"><span>Звуки</span><input type="checkbox" data-set="sound" ${settings.sound ? 'checked' : ''}></label>
-      <label class="set-row"><span>Штраф за фальстарт <small class="muted">(нажал раньше времени — кнопка блокируется на 1 сек)</small></span><input type="checkbox" data-set="penalty" ${settings.penalty ? 'checked' : ''}></label>`;
+      <label class="set-row"><span>Штраф за фальстарт <small class="muted">(нажал раньше времени — кнопка блокируется на 1 сек)</small></span><input type="checkbox" data-set="penalty" ${settings.penalty ? 'checked' : ''}></label>
+      <label class="set-row"><span>Картинки, видео и аудио на телефонах игроков <small class="muted">(файлы заранее загружаются на телефоны)</small></span><input type="checkbox" data-set="phoneMedia" ${settings.phoneMedia ? 'checked' : ''}></label>
+      <label class="set-row"><span>Текст вопроса и ответ на телефонах игроков</span><input type="checkbox" data-set="phoneText" ${settings.phoneText ? 'checked' : ''}></label>
+      <label class="set-row"><span>Показывать ответ прямо на игровом экране <small class="muted">(только если экран видишь ты один. Для телевизора и Discord открой «👁 Окно ведущего» — ответы будут там)</small></span><input type="checkbox" data-set="hostAnswer" ${settings.hostAnswer ? 'checked' : ''}></label>`;
   }
   function bindSettings(el) {
     el.querySelectorAll('[data-set]').forEach((i) => i.addEventListener('change', () => {
@@ -685,6 +787,7 @@ export async function startPlay(root, boardId) {
       settings[k] = i.type === 'checkbox' ? i.checked : +i.value;
       sound.on = settings.sound;
       saveSettings();
+      if (S && S.phase !== 'setup') commit();
     }));
   }
 
@@ -710,6 +813,7 @@ export async function startPlay(root, boardId) {
 
   async function startNet(code) {
     net = new Host({ onData, onClose });
+    sender = new MediaSender((c, m) => net.send(c, m));
     S.code = await net.start(code);
     if (code && S.code !== code) toast(`Новый код комнаты: ${S.code}. Игрокам нужно зайти заново`, 'warn');
   }
@@ -783,6 +887,7 @@ export async function startPlay(root, boardId) {
           <span class="tb-spacer"></span>
           <button class="btn small ghost" data-ui="undo" title="Отменить (Ctrl+Z)">↶ Отменить</button>
           <button class="btn small ghost" data-ui="full" title="Во весь экран (F)">⛶</button>
+          <button class="btn small" data-ui="hostwin" title="Отдельное окно с правильными ответами. В Discord показывай только окно с игрой">👁 Окно ведущего</button>
           <button class="btn small" data-ui="menu">☰ Меню</button>
         </header>
         <main class="board-wrap"><div class="board"></div></main>
@@ -879,7 +984,7 @@ export async function startPlay(root, boardId) {
       if (c.stage === 'ddIntro') {
         main = `<div class="dd-banner">Вопрос-ставка!</div>`;
       } else {
-        main = `<div class="clue-text" style="--fs:${textSize(cl.q, !!ref)}">${nl2br(cl.q)}</div>`;
+        main = `<div class="clue-text" style="--fs:${textSize(cl.q, !!ref)}">${nl2br(cl.q)}</div>${showAns ? '' : hostPeek(cl.a)}`;
         if (c.stage === 'open' && c.deadline) status = timerHTML(c.deadline, settings.timer);
         if (c.stage === 'buzzed') status = `${c.ansDeadline ? timerHTML(c.ansDeadline, Math.max(5, settings.timer)) : ''}<div class="buzzed-name">Отвечает ${esc(player(c.buzzed)?.name)}!</div>`;
         if (c.stage === 'reading' && c.dd) status = `<div class="buzzed-name">Отвечает ${esc(player(c.ddPlayer)?.name)} · ставка ${fmt(c.wager)}</div>`;
@@ -903,7 +1008,7 @@ export async function startPlay(root, boardId) {
         return { key: 'fin-wager', cls: 'final', top, main: `<div class="final-cat"><small>Тема финала</small>${esc(fc.category || 'Финальный вопрос')}</div><p class="muted-light">${usesPhones() ? 'Делайте ставки на телефонах: сколько очков вы готовы поставить?' : 'Каждый игрок делает ставку — от 0 до всех своих очков.'}</p>`, status: wagerStatus() };
       }
       const ref = f.stage === 'reveal' && f.showAnswer && fc.aMedia ? fc.aMedia : fc.media;
-      const main = `<div class="clue-text" style="--fs:${textSize(fc.q, !!ref)}">${nl2br(fc.q)}</div>`;
+      const main = `<div class="clue-text" style="--fs:${textSize(fc.q, !!ref)}">${nl2br(fc.q)}</div>${f.showAnswer ? '' : hostPeek(fc.a)}`;
       let status = '';
       if (f.stage === 'clue') status = `${f.deadline ? timerHTML(f.deadline, settings.finalTimer) : ''}${usesPhones() ? wagerStatus('answers') : ''}`;
       if (f.stage === 'reveal' && f.showAnswer) status = `<div class="answer">${nl2br(fc.a || '—')}</div>`;
@@ -916,6 +1021,13 @@ export async function startPlay(root, boardId) {
       return { key: 'end', cls: 'interlude end', main: `<div class="big-title">${st[0] ? `Победа: ${esc(st[0].name)}!` : 'Игра окончена'}</div><div class="podium">${order}</div>${st.length > 3 ? standingsHTML(3) : ''}` };
     }
     return null;
+  }
+
+  // The correct answer for the host, shown before it is revealed (toggle in settings).
+  // Never while the host window is open: then the answer lives there, off the shared screen.
+  function hostPeek(a) {
+    if (!settings.hostAnswer || hostWinOpen()) return '';
+    return `<div class="host-ans"><small>Ответ для ведущего</small><b>${nl2br(a || '—')}</b></div>`;
   }
 
   function wagerStatus(kind = 'wagers') {
@@ -971,6 +1083,7 @@ export async function startPlay(root, boardId) {
   const tick = setInterval(() => {
     if (!S || destroyed) return;
     tickTimers();
+    if (hostWinShown !== hostWinOpen()) { hostWinShown = !hostWinShown; render(); }
     const c = S.clue;
     const now = Date.now();
     if (S.phase === 'clue' && c?.stage === 'open' && c.deadline && now >= c.deadline && !buzzTimer) {
@@ -1030,6 +1143,7 @@ export async function startPlay(root, boardId) {
       case 'back': return act('back');
       case 'adj': return act('adj', { pid: ds.pid, delta: +ds.d });
       case 'qr': return showQR();
+      case 'hostwin': return openHostWindow();
       case 'player': return playerMenu(ds.pid);
       case 'menu': return menu();
     }
@@ -1091,6 +1205,7 @@ export async function startPlay(root, boardId) {
       html: `<div class="settings-card">${settingsHTML()}</div>`,
       onMount: (w) => bindSettings(w),
       buttons: [
+        { label: 'Окно ведущего на этом компьютере', value: 'hostwin' },
         ...(usesPhones() ? [{ label: 'Ведущий с телефона (QR)', value: 'remote' }] : []),
         { label: 'Добавить игрока', value: 'add' },
         ...(['board', 'clue'].includes(S.phase) ? [{ label: 'Завершить раунд досрочно', value: 'endRound' }] : []),
@@ -1099,6 +1214,7 @@ export async function startPlay(root, boardId) {
       ],
     });
     if (r === 'remote') showRemoteQR();
+    if (r === 'hostwin') openHostWindow();
     if (r === 'add') {
       const name = await promptDlg('Имя игрока', '', { placeholder: 'Например, Вася' });
       if (name && name.trim()) {
@@ -1177,6 +1293,7 @@ export async function startPlay(root, boardId) {
     cancelAnimationFrame(confettiRaf);
     document.removeEventListener('keydown', onKey);
     window.removeEventListener('beforeunload', onBeforeUnload);
+    chan?.close();
     net?.destroy();
   };
 }

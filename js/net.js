@@ -76,7 +76,8 @@ export class Host {
       this.onClose(conn);
     };
     conn.on('close', closed);
-    conn.on('error', closed);
+    // An oversized message only drops that message; the connection itself is fine.
+    conn.on('error', (e) => (e?.type === 'message-too-big' ? console.warn(e) : closed()));
     conn._kill = closed;
   }
 
@@ -97,6 +98,45 @@ export class Host {
     clearInterval(this.ping);
     for (const c of this.conns) { try { c.close(); } catch {} }
     try { this.peer?.destroy(); } catch {}
+  }
+}
+
+// The host window on the same computer talks to the game screen through a BroadcastChannel:
+// no network, works in both modes, and nothing of it ends up on the shared screen.
+export const hostChannelName = (key) => 'plyukh-host-' + key;
+
+export class LocalLink {
+  constructor(key, { onOpen, onData, onStatus }) {
+    Object.assign(this, { key, onOpen, onData, onStatus });
+  }
+
+  connect() {
+    this.ch = new BroadcastChannel(hostChannelName(this.key));
+    this.ch.onmessage = (e) => {
+      const d = e.data;
+      if (!d || typeof d !== 'object') return;
+      this.last = Date.now();
+      if (!this.online) { this.online = true; this.onStatus?.('online'); }
+      this.onData(d);
+    };
+    this.onStatus?.('connecting');
+    this.onOpen?.();
+    // The game screen answers every ping with its current view, so a reload on either side heals itself.
+    this.timer = setInterval(() => {
+      this.send({ t: 'ping' });
+      if (this.online && Date.now() - this.last > 5000) { this.online = false; this.onStatus?.('lost'); }
+    }, 2000);
+  }
+
+  send(m) {
+    try { this.ch.postMessage(m); return this.online !== false; } catch { return false; }
+  }
+
+  lost() {}
+
+  stop() {
+    clearInterval(this.timer);
+    this.ch?.close();
   }
 }
 
@@ -135,7 +175,7 @@ export class Client {
         this.onData(d);
       });
       conn.on('close', () => live() && this.lost());
-      conn.on('error', () => live() && this.lost());
+      conn.on('error', (e) => (e?.type === 'message-too-big' ? console.warn(e) : live() && this.lost()));
     });
     peer.on('error', (err) => {
       if (!live()) return;
