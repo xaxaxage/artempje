@@ -1,21 +1,21 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1791795838641';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1791795838641';
-import { filled, finalReady, roundPlayable } from './board.js?v=1791795838641';
-import { mediaEl } from './media.js?v=1791795838641';
-import { play as sfx, sound, unlock } from './sound.js?v=1791795838641';
-import { Host, errText, hostChannelName } from './net.js?v=1791795838641';
-import { setHTML } from './controls.js?v=1791795838641';
-import { saveGame } from './history.js?v=1791795838641';
-import { MediaSender, describe } from './mediasync.js?v=1791795838641';
-import { VERSION } from './version.js?v=1791795838641';
-import { createScreen } from './gameui.js?v=1791795838641';
+import * as db from './db.js?v=1791812190596';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1791812190596';
+import { filled, finalReady, roundPlayable } from './board.js?v=1791812190596';
+import { mediaEl, kindOf } from './media.js?v=1791812190596';
+import { play as sfx, sound, unlock } from './sound.js?v=1791812190596';
+import { Host, errText, hostChannelName } from './net.js?v=1791812190596';
+import { setHTML } from './controls.js?v=1791812190596';
+import { saveGame } from './history.js?v=1791812190596';
+import { MediaSender, describe } from './mediasync.js?v=1791812190596';
+import { VERSION } from './version.js?v=1791812190596';
+import { createScreen } from './gameui.js?v=1791812190596';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all' };
 const BUZZ_WINDOW_MS = 220;
-const TEAM_COLORS = ['#df6e5c', '#5b8def', '#4fae8f', '#e0a43a', '#a77fd6', '#4fb7c9', '#e07ab0', '#8a9a5b'];
+const TEAM_COLORS = ['#df6e5c', '#5b8def', '#4fae8f', '#e0a43a', '#a77fd6', '#7d9a3a', '#d6588f', '#2a9fb5'];
 const TEAM_NAMES = ['Красные', 'Синие', 'Зелёные', 'Жёлтые', 'Фиолетовые', 'Голубые', 'Розовые', 'Оливковые'];
 
 export async function startPlay(root, boardId) {
@@ -177,6 +177,7 @@ export async function startPlay(root, boardId) {
     c.buzzed = { team: tid, pid };
     c.ansDeadline = settings.timer ? Date.now() + Math.max(5, settings.timer) * 1000 : 0;
     c.ansBeeped = false;
+    log({ k: 'buzz', team: tid, by: player(pid)?.name || '' });
     sfx('buzz');
   }
   function finishClue() {
@@ -197,20 +198,60 @@ export async function startPlay(root, boardId) {
     S.gameId = uid('g');
     S.startedAt = Date.now();
     S.endedAt = 0;
+    S.log = [];
     placeDDs();
     S.phase = 'board';
+    log({ k: 'start', r: S.round, picker: S.picker, scores: scoreMap() });
   }
 
+  // ---------- game log for the history ("time machine") ----------
+  const scoreMap = () => Object.fromEntries(S.teams.map((t) => [t.id, t.score]));
+  function log(e) {
+    (S.log ||= []).push({ t: Date.now(), ...e });
+  }
+
+  // The board as text, so the history can show questions even if the board is later edited or deleted.
+  function boardSnapshot() {
+    const m = (ref) => {
+      if (!ref) return null;
+      if (ref.kind === 'file') return { k: kindOf(ref), id: ref.id };
+      if (ref.kind === 'youtube') return { k: 'youtube', vid: ref.vid };
+      return { k: kindOf(ref), url: ref.url.length < 30000 ? ref.url : null };
+    };
+    return {
+      rounds: board.rounds.map((r) => ({
+        name: r.name, values: r.values,
+        cats: r.categories.map((c) => ({ name: c.name, clues: c.clues.map((cl) => ({ q: cl.q, a: cl.a, m: m(cl.media), am: m(cl.aMedia) })) })),
+      })),
+      final: finalReady(board) ? { cat: board.final.category, q: board.final.q, a: board.final.a, m: m(board.final.media), am: m(board.final.aMedia) } : null,
+    };
+  }
+
+  let historyTimer = null;
   function recordHistory() {
+    // A game is worth remembering once at least one question was played.
+    if (!S.log?.some((e) => ['right', 'wrong', 'none', 'fjudge'].includes(e.k))) return;
+    const finished = S.phase === 'end';
     saveGame({
+      v: 2,
+      test: autotest,
       id: S.gameId || (S.gameId = uid('g')),
-      at: S.endedAt || (S.endedAt = Date.now()),
+      at: finished ? S.endedAt || (S.endedAt = Date.now()) : Date.now(),
       startedAt: S.startedAt || 0,
+      finished,
       board: board.title,
       boardId: board.id,
       mode: S.mode,
+      teamMode: S.teamMode,
+      teams: S.teams.map((t) => ({ id: t.id, name: t.name, color: t.color, score: t.score, members: members(t.id).map((p) => p.name) })),
       players: standings().map((t) => ({ name: solo() ? t.name : `${t.name}${members(t.id).length ? ` (${members(t.id).map((p) => p.name).join(', ')})` : ''}`, score: t.score })),
+      snapshot: boardSnapshot(),
+      events: S.log,
     });
+  }
+  function scheduleHistory() {
+    clearTimeout(historyTimer);
+    historyTimer = setTimeout(() => { historyTimer = null; recordHistory(); }, 700);
   }
 
   // ---------- actions (from the screen, keyboard, the host's phone or the host window) ----------
@@ -227,6 +268,7 @@ export async function startPlay(root, boardId) {
         sfx('dd');
       }
       S.phase = 'clue';
+      log({ k: 'pick', r: S.round, c, q, value: S.clue.value, dd, picker: S.picker });
     },
     ddTeam({ team: tid }) {
       if (S.clue?.stage === 'ddIntro' && team(tid)) S.clue.ddTeam = tid;
@@ -239,6 +281,7 @@ export async function startPlay(root, boardId) {
       const { min, max } = ddRange(t);
       c.wager = clamp(Math.round(+amount || 0), min, max);
       c.stage = 'reading';
+      log({ k: 'dd', team: t.id, wager: c.wager });
     },
     open() {
       const c = S.clue;
@@ -254,6 +297,7 @@ export async function startPlay(root, boardId) {
       snapshot();
       const v = worth();
       addScore(tid, v);
+      log({ k: 'right', team: tid, by: player(c.buzzed?.pid)?.name || '', delta: v, scores: scoreMap() });
       c.result = { team: tid, pid: c.buzzed?.pid || null, delta: v };
       c.stage = 'answer';
       c.buzzed = null;
@@ -269,6 +313,7 @@ export async function startPlay(root, boardId) {
       snapshot();
       const v = worth();
       addScore(tid, -v);
+      log({ k: 'wrong', team: tid, by: player(c.buzzed?.pid)?.name || '', delta: -v, scores: scoreMap() });
       c.tried.push(tid);
       sfx('wrong');
       if (c.dd) { c.result = { team: tid, delta: -v }; c.stage = 'answer'; return; }
@@ -286,6 +331,7 @@ export async function startPlay(root, boardId) {
       c.stage = 'answer';
       c.buzzed = null;
       clearBuzz();
+      log({ k: 'none' });
     },
     manualBuzz({ team: tid }) {
       if (S.clue?.stage === 'open' && eligible().some((t) => t.id === tid)) setBuzzed(tid);
@@ -297,18 +343,28 @@ export async function startPlay(root, boardId) {
       const c = S.clue;
       if (!c) return;
       if (c.tried.length || c.result || c.stage === 'answer') finishClue();
-      else { S.clue = null; S.phase = 'board'; clearBuzz(); }
+      else {
+        // Opened by mistake: it never happened, so drop it from the log too.
+        while (S.log?.length && S.log[S.log.length - 1].k !== 'pick') S.log.pop();
+        S.log?.pop();
+        S.clue = null;
+        S.phase = 'board';
+        clearBuzz();
+      }
     },
     adj({ team: tid, delta }) {
       if (!team(tid)) return;
       snapshot();
       addScore(tid, Math.round(+delta || 0));
+      log({ k: 'adj', team: tid, delta: Math.round(+delta || 0), scores: scoreMap() });
     },
     setScore({ team: tid, value }) {
       const t = team(tid);
       if (!t) return;
       snapshot();
+      const before = t.score;
       t.score = Math.round(+value || 0);
+      log({ k: 'adj', team: tid, delta: t.score - before, scores: scoreMap() });
     },
     setPicker({ team: tid }) {
       if (team(tid)) S.picker = tid;
@@ -328,11 +384,14 @@ export async function startPlay(root, boardId) {
         S.round = nx;
         placeDDs();
         S.phase = 'board';
+        log({ k: 'round', r: nx });
       } else if (finalReady(board) && S.teams.length) {
         S.phase = 'final';
         S.fin = { stage: 'wager', wagers: {}, answers: {}, shown: {}, judged: {}, deadline: 0, showAnswer: false, timeUp: false };
+        log({ k: 'final' });
       } else {
         S.phase = 'end';
+        log({ k: 'end', scores: scoreMap() });
         sfx('win');
       }
     },
@@ -346,6 +405,7 @@ export async function startPlay(root, boardId) {
       if (S.phase !== 'final' || S.fin.stage !== 'wager') return;
       snapshot();
       for (const t of S.teams) S.fin.wagers[t.id] ??= 0;
+      log({ k: 'fwagers', wagers: { ...S.fin.wagers } });
       S.fin.stage = 'clue';
       S.fin.deadline = settings.finalTimer ? Date.now() + settings.finalTimer * 1000 : 0;
       S.fin.timeUp = false;
@@ -370,6 +430,7 @@ export async function startPlay(root, boardId) {
       f.judged[tid] = !!ok;
       const w = f.wagers[tid] || 0;
       addScore(tid, ok ? w : -w);
+      log({ k: 'fjudge', team: tid, answer: f.answers[tid] ?? null, wager: w, ok: !!ok, scores: scoreMap() });
       sfx(ok ? 'correct' : 'wrong');
     },
     finCorrect() {
@@ -379,6 +440,7 @@ export async function startPlay(root, boardId) {
       if (S.phase !== 'final') return;
       snapshot();
       S.phase = 'end';
+      log({ k: 'end', scores: scoreMap() });
       sfx('win');
     },
     replay() {
@@ -782,7 +844,7 @@ export async function startPlay(root, boardId) {
 
   function commit() {
     if (destroyed) return;
-    if (S.phase === 'end' && !autotest) recordHistory();
+    if (S.gameId && !['setup', 'lobby'].includes(S.phase)) scheduleHistory();
     syncChannel();
     persist();
     render();
@@ -1249,6 +1311,7 @@ export async function startPlay(root, boardId) {
     const now = Date.now();
     if (S.phase === 'clue' && c?.stage === 'open' && c.deadline && now >= c.deadline && !buzzTimer) {
       c.stage = 'answer';
+      log({ k: 'none' });
       sfx('timeup');
       commit();
     } else if (S.phase === 'clue' && c?.stage === 'buzzed' && c.ansDeadline && now >= c.ansDeadline && !c.ansBeeped) {
@@ -1320,6 +1383,8 @@ export async function startPlay(root, boardId) {
 
   return () => {
     destroyed = true;
+    // Leaving the page: save the latest moves right away instead of waiting for the timer.
+    if (historyTimer) { clearTimeout(historyTimer); recordHistory(); }
     clearInterval(tick);
     clearBuzz();
     unmountScreen();

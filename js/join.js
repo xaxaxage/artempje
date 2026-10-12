@@ -1,11 +1,11 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791795838641';
-import { VERSION } from './version.js?v=1791795838641';
-import { Client, LocalLink } from './net.js?v=1791795838641';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791795838641';
-import { MediaReceiver } from './mediasync.js?v=1791795838641';
-import { createScreen, prefs } from './gameui.js?v=1791795838641';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791812190596';
+import { VERSION } from './version.js?v=1791812190596';
+import { Client, LocalLink } from './net.js?v=1791812190596';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791812190596';
+import { MediaReceiver } from './mediasync.js?v=1791812190596';
+import { createScreen, prefs } from './gameui.js?v=1791812190596';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -14,7 +14,7 @@ const hostKey = params.get('k') || '';
 const role = hostKey ? 'host' : 'player';
 // Host window opened from the game screen on the same computer (no room code, no network).
 const local = role === 'host' && params.get('local') === '1';
-if (local) document.title = 'Окно ведущего — Плюх';
+if (local) document.title = 'Окно ведущего — artempje';
 // Test bench (test/): a fake player in a frame, with its own id and an automatic team.
 const testN = params.get('test');
 
@@ -37,7 +37,7 @@ const receiver = new MediaReceiver(() => {
   mediaRaf = requestAnimationFrame(() => { mediaRaf = 0; if (view) renderPlayer(); });
 });
 
-const logo = `<a class="logo" href="../">${LOGO_SVG}<span>Плюх</span></a>`;
+const logo = `<a class="logo" href="../">${LOGO_SVG}<span>artempje</span></a>`;
 
 function pidFor(c) {
   if (testN) return `test-${testN}`;
@@ -204,8 +204,8 @@ function checkVersion(hostV) {
 function buzzState(v) {
   const me = v.me;
   const c = me.clue;
-  if (v.phase === 'board') return { cls: 'bs-closed', big: 'Плюх!', small: v.view?.mine ? 'ваш выбор — нажми на клетку' : 'ждём вопрос' };
-  if (v.phase !== 'clue' || !c) return { cls: 'bs-closed', big: 'Плюх!', small: '' };
+  if (v.phase === 'board') return { cls: 'bs-closed', big: 'Жди', small: v.view?.mine ? 'ваш выбор — нажми на клетку' : 'ждём вопрос' };
+  if (v.phase !== 'clue' || !c) return { cls: 'bs-closed', big: 'Жди', small: '' };
   if (c.stage === 'answer') {
     const r = c.result;
     if (r?.mine) return { cls: r.delta >= 0 ? 'bs-mine' : 'bs-bad', big: signed(r.delta), small: r.delta >= 0 ? 'верно!' : 'неверно' };
@@ -213,7 +213,7 @@ function buzzState(v) {
   }
   if (c.stage === 'reading') {
     if (Date.now() - earlyAt < 900) return { cls: 'bs-early', big: 'Рано!', small: 'дождись, пока откроют кнопки' };
-    return { cls: 'bs-closed', big: 'Плюх!', small: 'кнопки ещё закрыты' };
+    return { cls: 'bs-closed', big: 'Жди', small: 'кнопки ещё закрыты' };
   }
   if (c.stage === 'open') {
     if (c.triedMine) return { cls: 'bs-done', big: 'Мимо', small: 'ваша команда уже отвечала' };
@@ -225,7 +225,7 @@ function buzzState(v) {
     if (c.buzzedMine) return { cls: 'bs-mine', big: 'Отвечайте!', small: c.buzzedName ? `${c.buzzedName} нажал(а) первым` : 'ваша команда первая' };
     return { cls: 'bs-other', big: c.buzzedTeam?.name || '…', small: 'отвечают' };
   }
-  return { cls: 'bs-closed', big: 'Плюх!', small: '' };
+  return { cls: 'bs-closed', big: 'Жди', small: '' };
 }
 
 function press() {

@@ -1,8 +1,9 @@
-import { renderHome } from './home.js?v=1791795838641';
-import { renderEditor } from './editor.js?v=1791795838641';
-import { startPlay } from './game.js?v=1791795838641';
-import { esc, siteUpdatedBanner } from './util.js?v=1791795838641';
-import { VERSION } from './version.js?v=1791795838641';
+import { renderHome } from './home.js?v=1791812190596';
+import { renderEditor } from './editor.js?v=1791812190596';
+import { startPlay } from './game.js?v=1791812190596';
+import { renderHistory } from './historyview.js?v=1791812190596';
+import { esc, siteUpdatedBanner } from './util.js?v=1791812190596';
+import { VERSION } from './version.js?v=1791812190596';
 
 const host = document.getElementById('app');
 let cleanup = null;
@@ -21,6 +22,7 @@ async function route() {
   try {
     if (view === 'edit' && id) c = await renderEditor(root, id);
     else if (view === 'play' && id) c = await startPlay(root, id);
+    else if (view === 'history' && id) c = await renderHistory(root, id);
     else c = await renderHome(root);
   } catch (e) {
     console.error(e);

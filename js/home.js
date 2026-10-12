@@ -1,9 +1,9 @@
-import * as db from './db.js?v=1791795838641';
-import { esc, uid, fmt, toast, dialog, confirmDlg, promptDlg, download, pickFile, safeFileName, store, plural, LOGO_SVG } from './util.js?v=1791795838641';
-import { newBoard, mediaRefs, stats, normalize, finalReady, allClues } from './board.js?v=1791795838641';
-import { toPortable, fromPortable, copyRef, dropRef } from './media.js?v=1791795838641';
-import { exampleBoard } from './examples.js?v=1791795838641';
-import { listHistory, removeGame, clearHistory } from './history.js?v=1791795838641';
+import * as db from './db.js?v=1791812190596';
+import { esc, uid, fmt, toast, dialog, confirmDlg, promptDlg, download, pickFile, safeFileName, store, plural, LOGO_SVG } from './util.js?v=1791812190596';
+import { newBoard, mediaRefs, stats, normalize, finalReady, allClues } from './board.js?v=1791812190596';
+import { toPortable, fromPortable, copyRef, dropRef } from './media.js?v=1791812190596';
+import { exampleBoard } from './examples.js?v=1791812190596';
+import { listHistory, removeGame, clearHistory } from './history.js?v=1791812190596';
 
 const MODE_NAMES = { simple: 'Простой режим', buzzer: 'С кнопками' };
 
@@ -16,7 +16,7 @@ export async function renderHome(root) {
 
   root.innerHTML = `
     <header class="site-head">
-      <a class="logo" href="#/">${LOGO_SVG}<span>Плюх</span></a>
+      <a class="logo" href="#/">${LOGO_SVG}<span>artempje</span></a>
       <nav class="site-nav">
         <button class="nav-link" data-a="goto" data-sec="boards">Мои игры</button>
         <button class="nav-link" data-a="goto" data-sec="gallery">Готовые игры</button>
@@ -52,10 +52,10 @@ export async function renderHome(root) {
       <div class="steps">
         <div class="step"><span class="step-n">01</span><b>Собери доску</b><p>Темы, вопросы, ответы, стоимость. Перетащи картинку, вставь скриншот через Ctrl+V или дай ссылку на YouTube.</p></div>
         <div class="step"><span class="step-n">02</span><b>Выведи на большой экран</b><p>Подключи ноутбук к телевизору по HDMI, Chromecast или AirPlay, или покажи экран в Discord.</p></div>
-        <div class="step"><span class="step-n">03</span><b>Играйте!</b><p>Друзья сканируют QR-код и жмут «Плюх!» на телефонах. Кто первый — тот отвечает. Есть вопросы-ставки и финал.</p></div>
+        <div class="step"><span class="step-n">03</span><b>Играйте!</b><p>Друзья сканируют QR-код и жмут кнопку на телефонах. Кто первый — тот отвечает. Есть вопросы-ставки и финал.</p></div>
       </div>
     </section>
-    <footer class="site-foot muted small">Плюх — бесплатная «Своя игра». Работает прямо в браузере, ничего не нужно устанавливать.</footer>`;
+    <footer class="site-foot muted small">artempje — бесплатная «Своя игра». Работает прямо в браузере, ничего не нужно устанавливать.</footer>`;
 
   const list = root.querySelector('.board-list');
   let gallery = [];
@@ -78,12 +78,12 @@ export async function renderHome(root) {
       </div>`).join('');
   }
 
-  function drawHistory() {
-    const h = listHistory();
+  async function drawHistory() {
+    const h = await listHistory().catch(() => []);
     root.querySelector('[data-a=clearHist]').hidden = !h.length;
     root.querySelector('.hist-list').innerHTML = h.length
       ? h.map(histHTML).join('')
-      : `<div class="empty-card muted">Здесь появятся результаты сыгранных игр.</div>`;
+      : `<div class="empty-card muted">Здесь появятся сыгранные игры: кто играл, все вопросы и ответы — можно будет пролистать игру заново.</div>`;
   }
 
   await drawBoards();
@@ -141,15 +141,20 @@ export async function renderHome(root) {
         toast('Готовим файл…');
         const boards = await db.listBoards();
         const data = { app: 'plyukh', v: 1, boards: await Promise.all(boards.map(portable)) };
-        download(`plyukh-vse-igry-${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify(data)], { type: 'application/json' }));
+        download(`artempje-vse-igry-${new Date().toISOString().slice(0, 10)}.json`, new Blob([JSON.stringify(data)], { type: 'application/json' }));
         return;
       }
       case 'clearHist':
-        if (await confirmDlg('Стереть всю историю игр?', 'Стереть', true)) { clearHistory(); drawHistory(); }
+        if (await confirmDlg('Стереть всю историю игр?', 'Стереть', true)) { await clearHistory(); drawHistory(); }
         return;
       case 'delHist':
-        removeGame(btn.closest('[data-hid]').dataset.hid);
+        e.stopPropagation();
+        if (!(await confirmDlg('Убрать эту игру из истории?', 'Убрать', true))) return;
+        await removeGame(btn.closest('[data-hid]').dataset.hid);
         drawHistory();
+        return;
+      case 'openHist':
+        location.hash = `#/history/${btn.closest('[data-hid]').dataset.hid}`;
         return;
       case 'play': location.hash = `#/play/${id}`; return;
       case 'edit': location.hash = `#/edit/${id}`; return;
@@ -220,11 +225,15 @@ function cardHTML(b) {
 function histHTML(h) {
   const when = new Date(h.at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   const mins = h.startedAt ? Math.max(1, Math.round((h.at - h.startedAt) / 60000)) : 0;
-  const meta = [when, mins ? `${mins} мин` : '', MODE_NAMES[h.mode] || ''].filter(Boolean).join(' · ');
-  const players = h.players.map((p, i) => `<span class="hp ${i === 0 ? 'win' : ''}">${i === 0 ? '🏆 ' : ''}${esc(p.name)} <b class="${p.score < 0 ? 'neg' : ''}">${fmt(p.score)}</b></span>`).join('');
-  return `<div class="hist" data-hid="${esc(h.id)}">
-    <div class="hist-top"><b>${esc(h.board)}</b><span class="muted small">${meta}</span><button class="icon-btn small-x" data-a="delHist" title="Убрать из истории">×</button></div>
-    <div class="hist-players">${players || '<span class="muted small">без игроков</span>'}</div>
+  const played = (h.events || []).filter((e) => e.k === 'pick').length;
+  const meta = [when, mins ? `${mins} мин` : '', MODE_NAMES[h.mode] || '', played ? `${played} ${plural(played, 'вопрос', 'вопроса', 'вопросов')}` : ''].filter(Boolean).join(' · ');
+  const rows = h.v === 2 && h.teams
+    ? [...h.teams].sort((a, b) => b.score - a.score).map((t, i) => `<span class="hp ${i === 0 ? 'win' : ''}">${i === 0 ? '🏆 ' : ''}<i class="hp-dot" style="background:${esc(t.color)}"></i>${esc(t.name)}${t.members?.length && h.teamMode !== 'solo' ? ` <span class="muted">(${esc(t.members.join(', '))})</span>` : ''} <b class="${t.score < 0 ? 'neg' : ''}">${fmt(t.score)}</b></span>`).join('')
+    : (h.players || []).map((p, i) => `<span class="hp ${i === 0 ? 'win' : ''}">${i === 0 ? '🏆 ' : ''}${esc(p.name)} <b class="${p.score < 0 ? 'neg' : ''}">${fmt(p.score)}</b></span>`).join('');
+  return `<div class="hist" data-hid="${esc(h.id)}" data-a="openHist" role="link" tabindex="0" title="Открыть игру">
+    <div class="hist-top"><b>${esc(h.board)}</b>${h.test ? '<span class="hv-tag">🧪 тест</span>' : ''}${h.v === 2 && !h.finished ? '<span class="hv-tag">не доиграна</span>' : ''}<span class="muted small">${meta}</span><button class="icon-btn small-x" data-a="delHist" title="Убрать из истории">×</button></div>
+    <div class="hist-players">${rows || '<span class="muted small">без игроков</span>'}</div>
+    ${h.v === 2 ? '<div class="hist-more">Открыть и пролистать игру →</div>' : ''}
   </div>`;
 }
 
@@ -239,12 +248,12 @@ async function portable(b) {
 
 export async function exportBoard(b) {
   const data = { app: 'plyukh', v: 1, board: await portable(b) };
-  download(`${safeFileName(b.title)}.plyukh.json`, new Blob([JSON.stringify(data)], { type: 'application/json' }));
+  download(`${safeFileName(b.title)}.artempje.json`, new Blob([JSON.stringify(data)], { type: 'application/json' }));
 }
 
 // Accepts a single-board file ({board}) or a backup of several ({boards}). Returns the added boards.
 async function importData(data, template) {
-  if (data?.app !== 'plyukh' || !(data.board || Array.isArray(data.boards))) throw new Error('Это не файл игры Плюх');
+  if (data?.app !== 'plyukh' || !(data.board || Array.isArray(data.boards))) throw new Error('Это не файл игры artempje');
   const added = [];
   for (const raw of data.board ? [data.board] : data.boards) {
     const b = normalize(raw);
