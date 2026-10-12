@@ -1,9 +1,9 @@
-import * as db from './db.js?v=1791831883056';
-import { esc, uid, fmt, toast, dialog, confirmDlg, promptDlg, download, pickFile, safeFileName, store, plural, LOGO_SVG } from './util.js?v=1791831883056';
-import { newBoard, mediaRefs, stats, normalize, finalReady, allClues } from './board.js?v=1791831883056';
-import { toPortable, fromPortable, copyRef, dropRef } from './media.js?v=1791831883056';
-import { exampleBoard } from './examples.js?v=1791831883056';
-import { listHistory, removeGame, clearHistory } from './history.js?v=1791831883056';
+import * as db from './db.js?v=1791832753377';
+import { esc, uid, fmt, toast, dialog, confirmDlg, promptDlg, download, pickFile, safeFileName, store, plural, LOGO_SVG } from './util.js?v=1791832753377';
+import { newBoard, mediaRefs, stats, normalize, finalReady, allClues } from './board.js?v=1791832753377';
+import { toPortable, fromPortable, copyRef, dropRef } from './media.js?v=1791832753377';
+import { exampleBoard } from './examples.js?v=1791832753377';
+import { listHistory, removeGame, clearHistory } from './history.js?v=1791832753377';
 
 const MODE_NAMES = { simple: 'Простой режим', buzzer: 'С кнопками' };
 

@@ -1,10 +1,18 @@
-// Room-code trap: room 6666 never exists. The join page pretends to connect, the screen slowly goes dark,
-// and after a pause Foxy (keyed off his green screen in WebGL) jumps out with the scream at full loudness.
+// Random jump scare. Now and then, when a question opens in a game (or while a board is being made),
+// the lights flicker and go out, and after a pause Foxy (keyed off his green screen in WebGL) jumps out
+// with the scream at full loudness. Then the game is back as if nothing happened.
 // The scream (assets/screamer.wav) is normalized and soft-clipped to be as loud as a file can be.
-export const SCARE_CODE = '6666';
+import { store } from './util.js?v=1791832753377';
 
 const VIDEO = new URL('../assets/screamer.mp4', import.meta.url).href;
 const SOUND = new URL('../assets/screamer.wav', import.meta.url).href;
+
+// Chance per opened question (game) or opened clue editor; set in the game settings, shared with the editor.
+export const CHANCE = { off: 0, rare: 0.06, often: 0.15 };
+export function level() {
+  const v = store.get('plyukh-settings', {}).scare;
+  return v in CHANCE ? v : 'rare';
+}
 
 let ctx = null;
 let videoBlob = null; // Promise<string> object URL, so playback starts without network delays
@@ -13,16 +21,15 @@ let current = null;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Starts downloading early (no sound needed yet), e.g. when the trap code is typed.
 export function prefetch() {
   videoBlob ||= fetch(VIDEO).then((r) => r.blob()).then((b) => URL.createObjectURL(b)).catch(() => VIDEO);
   soundBytes ||= fetch(SOUND).then((r) => r.arrayBuffer()).catch(() => null);
 }
 
-// Must be called inside a tap/submit handler: browsers unlock sound only during a user gesture.
-export function arm() {
-  prefetch();
-  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {} // iPhone: ignore the silent switch
+// Browsers allow sound only after the page was tapped or clicked: unlock our audio on every such gesture
+// until it runs, so a scare much later can still scream.
+function unlock() {
+  if (ctx?.state === 'running') return;
   try {
     ctx ||= new (window.AudioContext || window.webkitAudioContext)();
     ctx.resume();
@@ -32,6 +39,7 @@ export function arm() {
     s.start(0);
   } catch { ctx = null; }
 }
+for (const e of ['pointerdown', 'keydown', 'touchend']) addEventListener(e, unlock, true);
 
 async function decodedSound() {
   const bytes = await soundBytes;
@@ -41,6 +49,8 @@ async function decodedSound() {
 }
 
 function playSound(buf) {
+  try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {} // iPhone: past the silent switch
+  ctx.resume();
   const g = ctx.createGain();
   g.connect(ctx.destination);
   const s = ctx.createBufferSource();
@@ -113,10 +123,11 @@ export function stop() {
   current?.abort();
 }
 
-// Dims the page to black, waits, screams. Resolves true when it's over (the overlay then fades by itself),
-// false if stop() cancelled it.
-export async function scare() {
-  stop();
+// The lights flicker and go out; after `wait` ms of darkness, BOO. The overlay then fades away by itself.
+// In a game the host picks `wait`, so every screen screams at the same moment.
+export async function scare({ wait = 900 + Math.random() * 1400 } = {}) {
+  if (current) return false;
+  prefetch();
   let aborted = false;
   const el = document.createElement('div');
   el.className = 'scare';
@@ -127,19 +138,18 @@ export async function scare() {
   video.className = 'scare-src';
   el.append(video);
   document.body.append(el);
-  const token = { abort: () => { aborted = true; el.remove(); } };
+  const token = { abort: () => { aborted = true; el.remove(); if (current === token) current = null; } };
   current = token;
+  const finish = (ok) => { if (current === token) current = null; return ok; };
 
   const canvas = el.querySelector('canvas');
   const draw = webglKeyer(canvas) || canvasKeyer(canvas);
 
-  el.getBoundingClientRect();
-  el.classList.add('dark'); // the lights slowly go out
-  const [src, buf] = await Promise.all([videoBlob, decodedSound(), sleep(1600)]);
+  const [src, buf] = await Promise.all([videoBlob, decodedSound(), sleep(1500)]); // the flicker runs meanwhile
   video.src = src;
   await Promise.race([new Promise((r) => { video.oncanplaythrough = r; video.onerror = r; }), sleep(4000)]);
-  await sleep(1200 + Math.random() * 1600); // ...and nothing happens. Lean closer.
-  if (aborted) return false;
+  await sleep(wait);
+  if (aborted) return finish(false);
 
   let raf = 0;
   const loop = () => { if (video.readyState >= 2) draw(video); if (!video.ended) raf = requestAnimationFrame(loop); };
@@ -158,10 +168,9 @@ export async function scare() {
   await sleep(1750);
   cancelAnimationFrame(raf);
   el.classList.add('over'); // cut to black
-  await sleep(450);
-  if (current === token) current = null;
-  if (aborted) return false;
+  await sleep(600);
+  if (aborted) return finish(false);
   el.classList.add('gone');
-  setTimeout(() => el.remove(), 600);
-  return true;
+  setTimeout(() => el.remove(), 700);
+  return finish(true);
 }

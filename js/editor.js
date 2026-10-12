@@ -1,7 +1,8 @@
-import * as db from './db.js?v=1791831883056';
-import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1791831883056';
-import { newClue, newRound, filled } from './board.js?v=1791831883056';
-import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1791831883056';
+import * as db from './db.js?v=1791832753377';
+import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1791832753377';
+import { newClue, newRound, filled } from './board.js?v=1791832753377';
+import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1791832753377';
+import * as screamer from './screamer.js?v=1791832753377';
 
 export async function renderEditor(root, id) {
   const board = await db.getBoard(id);
@@ -292,8 +293,18 @@ export async function renderEditor(root, id) {
   }
   let activeZone = null;
 
+  // Now and then, while a question is being typed in, the lights go out (js/screamer.js).
+  let opensSinceScare = 0;
+  function maybeScare() {
+    if (++opensSinceScare < 3 || !(Math.random() < screamer.CHANCE[screamer.level()])) return;
+    opensSinceScare = 0;
+    screamer.prefetch();
+    setTimeout(() => { if (!closed) screamer.scare(); }, 2500 + Math.random() * 4000);
+  }
+
   // ---------- clue editor modal ----------
   function openClue(ci, qi) {
+    maybeScare();
     const r = board.rounds[tab];
     let cur = { ci, qi };
     const order = [];

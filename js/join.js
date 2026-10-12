@@ -1,12 +1,12 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791831883056';
-import { VERSION } from './version.js?v=1791831883056';
-import { Client, LocalLink } from './net.js?v=1791831883056';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791831883056';
-import { MediaReceiver } from './mediasync.js?v=1791831883056';
-import { createScreen, prefs } from './gameui.js?v=1791831883056';
-import * as screamer from './screamer.js?v=1791831883056';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791832753377';
+import { VERSION } from './version.js?v=1791832753377';
+import { Client, LocalLink } from './net.js?v=1791832753377';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791832753377';
+import { MediaReceiver } from './mediasync.js?v=1791832753377';
+import { createScreen, prefs } from './gameui.js?v=1791832753377';
+import * as screamer from './screamer.js?v=1791832753377';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -125,14 +125,11 @@ function nameScreen() {
   </div>`;
   const i = $('form input', app);
   i.focus();
-  const trapped = role === 'player' && !testN && code === screamer.SCARE_CODE;
-  if (trapped) screamer.prefetch();
   $('form', app).addEventListener('submit', (e) => {
     e.preventDefault();
     name = i.value.trim().slice(0, 20);
     if (!name) return toast('Напиши имя');
     store.set('plyukh-name', name);
-    if (trapped) return trap();
     connect();
   });
   $('[data-other]', app).addEventListener('click', () => leave());
@@ -151,21 +148,6 @@ function connectingScreen() {
   app.innerHTML = `<div class="ph-center">${homeLink}${logo}<div class="connecting"><div class="spinner"></div>${local ? 'Подключаемся к экрану игры…' : `Подключаемся к комнате ${esc(code)}…`}</div>
     <button type="button" class="link-btn" data-cancel>${role === 'player' ? 'Отмена — ввести другой код' : 'Отмена'}</button></div>`;
   $('[data-cancel]', app).addEventListener('click', () => leave());
-}
-
-// The screamer room (see js/screamer.js): looks exactly like joining, then the lights go out.
-// Runs from the submit/tap handler, so the scream is allowed to play with sound.
-async function trap() {
-  mounted = false;
-  screamer.arm();
-  connectingScreen();
-  if (!(await screamer.scare())) return;
-  app.innerHTML = `<div class="ph-center">${homeLink}${logo}<h1>😈 Попался!</h1>
-    <p class="muted">Комнаты ${esc(code)} не существует — это ловушка.</p>
-    <button class="btn primary big wide" data-other>Ввести настоящий код</button>
-    <button type="button" class="link-btn" data-again>Напугать ещё раз</button></div>`;
-  $('[data-other]', app).addEventListener('click', () => leave());
-  $('[data-again]', app).addEventListener('click', () => trap());
 }
 
 function connect() {
@@ -188,7 +170,8 @@ function connect() {
 
 function onMsg(d) {
   if (receiver.handle(d)) return;
-  if (d.t === 'welcome') { pid = d.pid; checkVersion(d.v); return; }
+  if (d.t === 'welcome') { pid = d.pid; checkVersion(d.v); screamer.prefetch(); return; }
+  if (d.t === 'scare') { setTimeout(() => screamer.scare({ wait: d.wait }), d.delay); return; } // see js/screamer.js
   if (d.t === 'denied') { client.stop(); return messageScreen('Ссылка пульта устарела', 'Открой новую ссылку из меню игры на экране ведущего'); }
   if (d.t === 'kicked') { client.stop(); store.del('plyukh-pid-' + code); return messageScreen('Ты вне игры', 'Ведущий убрал тебя из этой комнаты', true); }
   if (d.t !== 'state' && d.t !== 'hstate') return;
@@ -505,6 +488,5 @@ document.addEventListener('visibilitychange', () => {
 if (local) connect();
 else if (!code) codeScreen();
 else if (role === 'host' || testN) connect();
-else if (code === screamer.SCARE_CODE) nameScreen(); // the trap needs a tap first, for the sound
 else if (name && store.get('plyukh-pid-' + code)) connect(); // returning to the same room: skip the name step
 else nameScreen();

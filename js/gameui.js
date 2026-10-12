@@ -1,7 +1,7 @@
 // The game screen shared by the host and the players: three layouts, soft themes and the ⚙ popover.
 // Pages build a plain "model" of what to show; this module turns it into DOM and reports clicks back.
-import { esc, nl2br, fmt, store } from './util.js?v=1791831883056';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791831883056';
+import { esc, nl2br, fmt, store } from './util.js?v=1791832753377';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791832753377';
 
 export const THEMES = [['sand', 'Песок', '#5b8a85'], ['studio', 'Студия', '#3a4a85'], ['night', 'Ночь', '#a99cf0'], ['mint', 'Мята', '#4fae8f'], ['lilac', 'Лаванда', '#8c7cc2']];
 export const LAYOUTS = [['a', 'Колонка справа'], ['b', 'Счёт внизу'], ['c', 'Телешоу']];

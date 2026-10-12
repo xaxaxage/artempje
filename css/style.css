@@ -1028,10 +1028,12 @@ body.phone { overscroll-behavior: none; }
 .rm-foot { text-align: center; }
 .rm-warn { margin: 0; padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--yellow) 22%, var(--card)); border: 2px solid var(--yellow); font-size: .85rem; font-weight: 600; }
 
-/* ---------- screamer (room-code trap, js/screamer.js) ---------- */
-.scare { position: fixed; inset: 0; z-index: 1000; overflow: hidden; touch-action: none; background: radial-gradient(ellipse at center, #121014 0%, #050506 60%, #000 100%); opacity: 0; transition: opacity 1.4s ease-in; }
-.scare.dark { opacity: 1; }
-.scare.gone { opacity: 0; transition: opacity .5s ease-out; }
+/* ---------- screamer (random jump scare, js/screamer.js) ---------- */
+.scare { position: fixed; inset: 0; z-index: 1000; overflow: hidden; touch-action: none; background: radial-gradient(ellipse at center, #121014 0%, #050506 60%, #000 100%); animation: scare-lights 1.5s linear both; }
+.scare.gone { animation: scare-out .6s ease-out both; }
+/* The lights stutter twice (slow enough not to strobe) and go out. */
+@keyframes scare-lights { 0% { opacity: 0; } 8% { opacity: .85; } 13% { opacity: .1; } 33% { opacity: .92; } 40% { opacity: .25; } 62%, 100% { opacity: 1; } }
+@keyframes scare-out { from { opacity: 1; } to { opacity: 0; } }
 .scare-src { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .scare-stage { position: absolute; left: 50%; top: 50%; width: max(100vw, 120vh); aspect-ratio: 16 / 9; transform: translate(-50%, -50%); }
 .scare-stage canvas { display: block; width: 100%; height: 100%; }
