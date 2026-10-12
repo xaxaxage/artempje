@@ -1,5 +1,5 @@
 // A ready-to-play example board so a new visitor can try the game right away.
-import { newBoard, newClue } from './board.js?v=1791832880491';
+import { newBoard, newClue } from './board.js?v=1791833281460';
 
 const svg = (body, vb) => {
   const [, , w, h] = vb.split(' ').map(Number);
