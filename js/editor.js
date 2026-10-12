@@ -98,7 +98,8 @@ export async function renderEditor(root, id) {
   }
 
   function cellHTML(cl, v, ci, qi) {
-    const icons = [cl.media && KIND_ICON[kindOf(cl.media)], cl.aMedia && '💡'].filter(Boolean).join(' ');
+    const hidden = cl.media?.phone === false || cl.aMedia?.phone === false;
+    const icons = [cl.media && KIND_ICON[kindOf(cl.media)], cl.aMedia && '💡', hidden && '📵'].filter(Boolean).join(' ');
     const has = filled(cl);
     return `<button class="ed-cell ${has ? '' : 'empty'} ${has && !cl.a.trim() ? 'warn' : ''}" data-clue="${ci},${qi}">
       <span class="v">${fmt(v)}</span>
@@ -227,6 +228,7 @@ export async function renderEditor(root, id) {
           <div class="mz-side">
             <b>${KIND_ICON[k]} ${KIND_LABEL[k]}</b>
             ${k === 'youtube' ? `<label class="small">Начать с секунды <input class="input tiny" type="number" min="0" data-mz="start" value="${ref.start || 0}"></label>` : ''}
+            <label class="mz-phone"><input type="checkbox" data-mz="phone" ${ref.phone !== false ? 'checked' : ''}> Показывать у игроков на телефонах</label>
             <button type="button" class="btn small" data-mz="file">Заменить</button>
             <button type="button" class="btn small ghost danger-text" data-mz="del">Убрать</button>
           </div>
@@ -264,6 +266,13 @@ export async function renderEditor(root, id) {
     });
     el.addEventListener('change', (e) => {
       if (e.target.dataset.mz === 'start') { const ref = get(); ref.start = Math.max(0, Math.round(+e.target.value || 0)); onChange(); }
+      if (e.target.dataset.mz === 'phone') {
+        // Only "off" is stored: files are shown on phones unless the author says otherwise.
+        const ref = get();
+        if (e.target.checked) delete ref.phone;
+        else ref.phone = false;
+        onChange();
+      }
     });
     el.addEventListener('dragover', (e) => { e.preventDefault(); el.classList.add('drag'); });
     el.addEventListener('dragleave', () => el.classList.remove('drag'));

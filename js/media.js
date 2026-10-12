@@ -137,7 +137,7 @@ export async function toPortable(ref) {
   if (ref?.kind !== 'file') return ref || null;
   const rec = await db.getMedia(ref.id);
   if (!rec) return null;
-  return { kind: 'file', mime: ref.mime, data: await blobToDataURL(rec.blob) };
+  return { kind: 'file', mime: ref.mime, data: await blobToDataURL(rec.blob), ...(ref.phone === false ? { phone: false } : {}) };
 }
 
 export async function fromPortable(p) {
@@ -148,7 +148,7 @@ export async function fromPortable(p) {
   const id = uid('m');
   const mime = p.mime || blob.type;
   await db.putMedia({ id, blob, mime, name: '' });
-  return { kind: 'file', id, mime };
+  return { kind: 'file', id, mime, ...(p.phone === false ? { phone: false } : {}) };
 }
 
 export const ytThumb = (vid) => `https://i.ytimg.com/vi/${vid}/hqdefault.jpg`;

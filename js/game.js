@@ -476,7 +476,7 @@ export async function startPlay(root, boardId) {
       if (c.stage !== 'ddIntro') {
         const cl = clueAt(c);
         const ans = c.stage === 'answer';
-        v.clue.show = phoneShow(ans && cl.aMedia ? cl.aMedia : cl.media, cl.q, ans ? cl.a : '');
+        v.clue.show = phoneShow(phonePick(cl.media, cl.aMedia, ans), cl.q, ans ? cl.a : '');
       }
     }
     if (S.phase === 'final' && S.fin) {
@@ -488,7 +488,7 @@ export async function startPlay(root, boardId) {
         remainMs: f.stage === 'clue' && f.deadline ? f.deadline - Date.now() : 0,
         judged: f.judged[pid] ?? null,
       };
-      if (f.stage !== 'wager') v.fin.show = phoneShow(f.showAnswer && fc.aMedia ? fc.aMedia : fc.media, fc.q, f.showAnswer ? fc.a : '');
+      if (f.stage !== 'wager') v.fin.show = phoneShow(phonePick(fc.media, fc.aMedia, f.showAnswer), fc.q, f.showAnswer ? fc.a : '');
     }
     if (['roundEnd', 'end'].includes(S.phase)) v.standings = standings().map((x) => ({ name: x.name, score: x.score, me: x.id === pid }));
     return v;
@@ -512,6 +512,11 @@ export async function startPlay(root, boardId) {
     };
   }
 
+  // A file can be kept off the phones with its own checkbox in the editor.
+  const forPhones = (ref) => (ref && ref.phone !== false ? ref : null);
+  // Answer media replaces the question's once revealed; if it's hidden, the question's stays.
+  const phonePick = (qRef, aRef, revealed) => (revealed && forPhones(aRef)) || forPhones(qRef);
+
   // What phones show of the current clue; the toggles in settings decide how much.
   function phoneShow(ref, q, a) {
     return {
@@ -526,11 +531,11 @@ export async function startPlay(root, boardId) {
     const c = S.clue;
     if (S.phase === 'clue' && c && c.stage !== 'ddIntro') {
       const cl = clueAt(c);
-      return c.stage === 'answer' && cl.aMedia ? cl.aMedia : cl.media;
+      return phonePick(cl.media, cl.aMedia, c.stage === 'answer');
     }
     if (S.phase === 'final' && S.fin && S.fin.stage !== 'wager') {
       const fc = board.final;
-      return S.fin.showAnswer && fc.aMedia ? fc.aMedia : fc.media;
+      return phonePick(fc.media, fc.aMedia, S.fin.showAnswer);
     }
     return null;
   }
@@ -545,7 +550,7 @@ export async function startPlay(root, boardId) {
     else if (['board', 'clue', 'roundEnd'].includes(S.phase)) add(S.round);
     if (S.phase === 'roundEnd') add(nextRoundIndex());
     if (finalReady(board) && S.phase !== 'end') out.push(board.final.media, board.final.aMedia);
-    return out.filter(Boolean);
+    return out.filter(forPhones);
   }
 
   function syncMedia(conn) {
