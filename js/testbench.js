@@ -1,8 +1,9 @@
 // Test bench: the host screen and a few fake players side by side, so one person can try a whole game.
 // The host frame creates a room and reports its code; each player frame then joins it with its own id.
-import * as db from './db.js?v=1791795754282';
-import { esc, store } from './util.js?v=1791795754282';
-import { stats } from './board.js?v=1791795754282';
+import * as db from './db.js?v=1791795838641';
+import { esc, store } from './util.js?v=1791795838641';
+import { stats } from './board.js?v=1791795838641';
+import { exampleBoard } from './examples.js?v=1791795838641';
 
 const NAMES = ['Вася', 'Маша', 'Петя', 'Оля'];
 const $ = (s) => document.querySelector(s);
@@ -12,10 +13,12 @@ const status = $('#tb-status');
 const saved = store.get('plyukh-testbench', { n: 2, dev: 'phone' });
 
 async function init() {
-  const boards = (await db.listBoards()).filter((b) => stats(b).done > 0);
+  let boards = (await db.listBoards()).filter((b) => stats(b).done > 0);
   if (!boards.length) {
-    status.textContent = 'Нет ни одной игры с вопросами — создай или возьми готовую на главной.';
-    return;
+    // A browser that never opened the home page has no games yet: give it the example to test with.
+    await db.putBoard(exampleBoard());
+    store.set('plyukh-seeded', true);
+    boards = (await db.listBoards()).filter((b) => stats(b).done > 0);
   }
   const wanted = new URLSearchParams(location.search).get('board') || saved.board;
   $('#tb-board').innerHTML = boards.map((b) => `<option value="${esc(b.id)}" ${b.id === wanted ? 'selected' : ''}>${esc(b.title)}</option>`).join('');

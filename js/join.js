@@ -1,11 +1,11 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791795754282';
-import { VERSION } from './version.js?v=1791795754282';
-import { Client, LocalLink } from './net.js?v=1791795754282';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791795754282';
-import { MediaReceiver } from './mediasync.js?v=1791795754282';
-import { createScreen, prefs } from './gameui.js?v=1791795754282';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791795838641';
+import { VERSION } from './version.js?v=1791795838641';
+import { Client, LocalLink } from './net.js?v=1791795838641';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791795838641';
+import { MediaReceiver } from './mediasync.js?v=1791795838641';
+import { createScreen, prefs } from './gameui.js?v=1791795838641';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
