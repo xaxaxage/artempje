@@ -1,20 +1,20 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1791833281460';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1791833281460';
-import { filled, finalReady, roundPlayable } from './board.js?v=1791833281460';
-import { mediaEl, kindOf } from './media.js?v=1791833281460';
-import { play as sfx, sound, unlock } from './sound.js?v=1791833281460';
-import { Host, errText, hostChannelName } from './net.js?v=1791833281460';
-import { setHTML } from './controls.js?v=1791833281460';
-import { saveGame } from './history.js?v=1791833281460';
-import { MediaSender, describe } from './mediasync.js?v=1791833281460';
-import { VERSION } from './version.js?v=1791833281460';
-import { createScreen } from './gameui.js?v=1791833281460';
-import * as screamer from './screamer.js?v=1791833281460';
+import * as db from './db.js?v=1791919655137';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1791919655137';
+import { filled, finalReady, roundPlayable } from './board.js?v=1791919655137';
+import { mediaEl, kindOf } from './media.js?v=1791919655137';
+import { play as sfx, sound, unlock } from './sound.js?v=1791919655137';
+import { Host, errText, hostChannelName } from './net.js?v=1791919655137';
+import { setHTML } from './controls.js?v=1791919655137';
+import { saveGame } from './history.js?v=1791919655137';
+import { MediaSender, describe } from './mediasync.js?v=1791919655137';
+import { VERSION } from './version.js?v=1791919655137';
+import { createScreen } from './gameui.js?v=1791919655137';
+import * as screamer from './screamer.js?v=1791919655137';
 
 const SETTINGS_KEY = 'plyukh-settings';
-const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare' };
+const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true };
 const BUZZ_WINDOW_MS = 220;
 const TEAM_COLORS = ['#df6e5c', '#5b8def', '#4fae8f', '#e0a43a', '#a77fd6', '#7d9a3a', '#d6588f', '#2a9fb5'];
 const TEAM_NAMES = ['Красные', 'Синие', 'Зелёные', 'Жёлтые', 'Фиолетовые', 'Голубые', 'Розовые', 'Оливковые'];
@@ -469,7 +469,7 @@ export async function startPlay(root, boardId) {
       case 'early': return onEarly(pid);
       case 'pick':
         // Players of the choosing team pick on their own screens.
-        if (p && S.phase === 'board' && p.teamId === S.picker) act('pick', { c: d.c, q: d.q });
+        if (p && S.phase === 'board' && p.teamId === S.picker && settings.phonePick) act('pick', { c: d.c, q: d.q });
         return;
       case 'team':
         if (p && team(d.team) && (S.phase === 'lobby' || !team(p.teamId)) && !solo()) { p.teamId = d.team; commit(); }
@@ -597,12 +597,13 @@ export async function startPlay(root, boardId) {
     const c = S.clue;
     if (S.phase === 'lobby') return { v: 'lobby', head: 'Ждём начала игры…', sub: 'Как только ведущий начнёт, здесь появится доска.' };
     if (S.phase === 'board' || (S.phase === 'clue' && !c)) {
-      const mine = !host && player(pid)?.teamId === S.picker;
+      const mine = !host && settings.phonePick && player(pid)?.teamId === S.picker;
       return {
         v: 'board', cats: r.categories.map((x) => x.name), values: r.values,
         open: r.categories.map((cat, ci) => cat.clues.map((cl, qi) => filled(cl) && !S.used[keyOf(S.round, ci, qi)])),
         canPick: host || mine, mine,
-        hint: host ? '' : mine ? 'Ваша команда выбирает — нажми на клетку' : team(S.picker) ? `Выбирают ${team(S.picker).name}` : '',
+        hint: host ? '' : mine ? 'Ваша команда выбирает — нажми на клетку'
+          : player(pid)?.teamId === S.picker ? 'Ваша команда выбирает — скажите ведущему' : team(S.picker) ? `Выбирают ${team(S.picker).name}` : '',
       };
     }
     if (S.phase === 'clue') {
@@ -984,7 +985,7 @@ export async function startPlay(root, boardId) {
     const c = S.clue;
     const hidden = settings.shared;
     if (S.phase === 'board') {
-      return { kind: 'host', lbl: 'Ход игры', text: team(S.picker) ? 'Выбирают {team}. Кликни по клетке за них — или дождись, пока выберут у себя.' : 'Кликни по клетке.', team: tinfo(S.picker), controls: [] };
+      return { kind: 'host', lbl: 'Ход игры', text: !team(S.picker) ? 'Кликни по клетке.' : settings.phonePick ? 'Выбирают {team}. Кликни по клетке за них — или дождись, пока выберут у себя.' : 'Выбирают {team}. Кликни по клетке, которую назовут.', team: tinfo(S.picker), controls: [] };
     }
     if (S.phase === 'clue' && c) {
       const cl = clueAt(c);
@@ -1036,6 +1037,7 @@ export async function startPlay(root, boardId) {
     const opt = (v, cur, label) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${label}</option>`;
     return `
       <label class="set-row"><span>Экран ведущего <small class="muted">(«общий» — если его видят игроки: на телевизоре или в трансляции. Тогда ответ скрыт)</small></span><select class="input small" data-set="shared" data-bool>${opt(false, settings.shared, 'Свой')}${opt(true, settings.shared, 'Общий')}</select></label>
+      <label class="set-row"><span>Игроки сами выбирают вопрос <small class="muted">(команда, чей ход, жмёт клетку у себя на телефоне. Выключи — и выбирать будет только ведущий)</small></span><input type="checkbox" data-set="phonePick" ${settings.phonePick ? 'checked' : ''}></label>
       <label class="set-row"><span>Вопросы-ставки <small class="muted">(случайные клетки, где можно поставить свои очки)</small></span><input type="checkbox" data-set="dd" ${settings.dd ? 'checked' : ''}></label>
       <label class="set-row"><span>Таймер на ответ</span><select class="input small" data-set="timer">${[0, 10, 15, 20, 30, 45].map((v) => opt(v, settings.timer, v ? `${v} сек` : 'выкл')).join('')}</select></label>
       <label class="set-row"><span>Таймер в финале</span><select class="input small" data-set="finalTimer">${[0, 30, 45, 60, 90].map((v) => opt(v, settings.finalTimer, v ? `${v} сек` : 'выкл')).join('')}</select></label>
