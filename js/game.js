@@ -1,19 +1,19 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1792357451862';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792357451862';
-import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792357451862';
-import { mediaEl, kindOf } from './media.js?v=1792357451862';
-import { play as sfx, sound, unlock } from './sound.js?v=1792357451862';
-import { Host, errText, hostChannelName } from './net.js?v=1792357451862';
-import { setHTML } from './controls.js?v=1792357451862';
-import { saveGame } from './history.js?v=1792357451862';
-import { MediaSender, describe } from './mediasync.js?v=1792357451862';
-import { VERSION } from './version.js?v=1792357451862';
-import { createScreen } from './gameui.js?v=1792357451862';
-import * as screamer from './screamer.js?v=1792357451862';
-import { MODS, modHead, resolveMod } from './mods.js?v=1792357451862';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792357451862';
+import * as db from './db.js?v=1792357741893';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792357741893';
+import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792357741893';
+import { mediaEl, kindOf } from './media.js?v=1792357741893';
+import { play as sfx, sound, unlock } from './sound.js?v=1792357741893';
+import { Host, errText, hostChannelName } from './net.js?v=1792357741893';
+import { setHTML } from './controls.js?v=1792357741893';
+import { saveGame } from './history.js?v=1792357741893';
+import { MediaSender, describe } from './mediasync.js?v=1792357741893';
+import { VERSION } from './version.js?v=1792357741893';
+import { createScreen } from './gameui.js?v=1792357741893';
+import * as screamer from './screamer.js?v=1792357741893';
+import { MODS, modHead, resolveMod } from './mods.js?v=1792357741893';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792357741893';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 'off', mini: 'rare', secret: 'one' };
@@ -653,6 +653,10 @@ export async function startPlay(root, boardId) {
         if (p && S.clue?.stage === 'mod' && S.clue.mod.team === p.teamId) act('modTarget', { team: d.team });
         return;
       case 'mini': return onMini(pid, d);
+      case 'spy':
+        // The secret code typed on a player's screen: they get the host's remote (js/join.js).
+        if (p && d.code === '556') net.send(conn, { t: 'spy', key: S.hostKey });
+        return;
       case 'fwager': if (p) act('finWager', { team: p.teamId, amount: d.amount }); return;
       case 'fanswer': if (p) act('finAnswer', { team: p.teamId, text: d.text }); return;
       case 'act':
@@ -671,7 +675,7 @@ export async function startPlay(root, boardId) {
       conn._role = 'host';
       hostConns.add(conn);
       net.send(conn, hostView());
-      toast('Пульт ведущего подключён');
+      if (!d.spy) toast('Пульт ведущего подключён'); // a spy's remote stays secret
       return;
     }
     if (S.kicked.includes(d.pid)) {

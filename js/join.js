@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1792357451862';
-import { VERSION } from './version.js?v=1792357451862';
-import { Client, LocalLink } from './net.js?v=1792357451862';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792357451862';
-import { MediaReceiver } from './mediasync.js?v=1792357451862';
-import { createScreen, prefs } from './gameui.js?v=1792357451862';
-import * as screamer from './screamer.js?v=1792357451862';
-import { MiniPlayer } from './minigames.js?v=1792357451862';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, promptDlg, LOGO_SVG } from './util.js?v=1792357741893';
+import { VERSION } from './version.js?v=1792357741893';
+import { Client, LocalLink } from './net.js?v=1792357741893';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792357741893';
+import { MediaReceiver } from './mediasync.js?v=1792357741893';
+import { createScreen, prefs } from './gameui.js?v=1792357741893';
+import * as screamer from './screamer.js?v=1792357741893';
+import { MiniPlayer } from './minigames.js?v=1792357741893';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -18,7 +18,7 @@ const role = hostKey ? 'host' : 'player';
 const local = role === 'host' && params.get('local') === '1';
 if (local) document.title = 'Окно ведущего — artempje';
 // The host's controls opened inside a player tab by the secret code (see "spy" below).
-const spyFrame = local && params.has('spy') && window.parent !== window;
+const spyFrame = role === 'host' && params.has('spy') && window.parent !== window;
 // Test bench (test/): a fake player in a frame, with its own id and an automatic team.
 const testN = params.get('test');
 
@@ -168,7 +168,7 @@ function connect() {
   screen = null;
   connectingScreen();
   const handlers = {
-    onOpen: () => client.send({ t: 'hello', role, pid, name, key: hostKey, have: receiver.keys(), v: VERSION, auto: !!testN }),
+    onOpen: () => client.send({ t: 'hello', role, pid, name, key: hostKey, have: receiver.keys(), v: VERSION, auto: !!testN, spy: spyFrame }),
     onData: onMsg,
     onStatus: (s) => { app.dataset.net = s; },
     onNoRoom: () => { client = null; codeScreen(`Комната ${code} не найдена. Проверь код на экране`); },
@@ -181,6 +181,7 @@ function connect() {
 function onMsg(d) {
   if (receiver.handle(d)) return;
   if (d.t === 'welcome') { pid = d.pid; checkVersion(d.v); screamer.prefetch(); return; }
+  if (d.t === 'spy') return showSpy(d.key);
   if (d.t === 'scare') { setTimeout(() => screamer.scare(), d.delay); return; } // see js/screamer.js
   if (d.t === 'denied') { client.stop(); return messageScreen('Ссылка пульта устарела', 'Открой новую ссылку из меню игры на экране ведущего'); }
   if (d.t === 'locked') { client.stop(); return messageScreen('Комната закрыта', 'Игра уже идёт, и ведущий закрыл вход. Попроси его открыть комнату — и попробуй снова.', 'Ввести код ещё раз'); }
@@ -547,40 +548,54 @@ document.addEventListener('keydown', (e) => {
   if (spyFrame && /^\d$/.test(e.key) && !e.target.closest('input, textarea')) parent.postMessage({ plyukh: 'spykey', key: e.key }, location.origin);
 });
 
-// ---------- spy: the host plays along from a player tab ----------
-// In the browser that runs the game, typing 556 on a player screen opens the host's controls
-// (answers, right/wrong, scores, kicking) in a side panel; 556 again hides it. On anyone else's
-// device the code does nothing: only this browser has the room's host key.
+// ---------- spy: a player who knows the code gets the host's controls ----------
+// Typing 556 on a player screen (or holding your name in the corner for a moment on a phone and
+// entering it) asks the game for the host key and opens the host's remote in a side panel:
+// answers, right/wrong, scores, kicking. 556 again hides it. Nothing shows on the shared screen.
 const SPY_CODE = '556';
 let spyKeys = '';
 let spyKeyAt = 0;
 let spyEl = null;
-
-function hostKeyHere() {
-  for (const k of ['plyukh-game', 'plyukh-game-test']) {
-    const s = store.get(k)?.s;
-    if (s?.hostKey && s.code === code) return s.hostKey;
-  }
-  return '';
-}
+let spyAsked = 0;
 
 function spyKey(key) {
   if (!/^\d$/.test(key)) return;
   const now = Date.now();
   spyKeys = (now - spyKeyAt > 1500 ? '' : spyKeys) + key;
   spyKeyAt = now;
-  if (!spyKeys.endsWith(SPY_CODE) || mounted !== 'player') return;
+  if (!spyKeys.endsWith(SPY_CODE)) return;
   spyKeys = '';
+  openSpy();
+}
+
+function openSpy() {
   if (spyEl) { spyEl.hidden = !spyEl.hidden; return; }
-  const roomKey = hostKeyHere();
-  if (!roomKey) return;
+  if (mounted !== 'player' || Date.now() - spyAsked < 3000) return;
+  spyAsked = Date.now();
+  client?.send({ t: 'spy', code: SPY_CODE });
+}
+
+function showSpy(roomKey) {
+  if (spyEl || !roomKey || mounted !== 'player') return;
   spyEl = document.createElement('div');
   spyEl.className = 'spy';
   spyEl.innerHTML = `<div class="spy-head"><b>🕵️ Ты ведущий</b><span>556 или Esc — спрятать</span><button type="button" title="Спрятать">×</button></div>
-    <iframe src="?k=${encodeURIComponent(roomKey)}&local=1&spy=1" title="Пульт ведущего"></iframe>`;
+    <iframe src="?r=${encodeURIComponent(code)}&k=${encodeURIComponent(roomKey)}&spy=1" title="Пульт ведущего"></iframe>`;
   spyEl.querySelector('button').addEventListener('click', () => { spyEl.hidden = true; });
   document.body.append(spyEl);
 }
+
+// Phones have no keys to type over the game: hold your name in the corner, then enter the code.
+let holdTimer = 0;
+app.addEventListener('pointerdown', (e) => {
+  if (!e.target.closest('.tb.me') || role !== 'player') return;
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(async () => {
+    const v = await promptDlg('Код', '', { type: 'number', ok: 'Ввести' });
+    if ((v || '').trim() === SPY_CODE) openSpy();
+  }, 1500);
+});
+for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) app.addEventListener(ev, () => clearTimeout(holdTimer));
 
 window.addEventListener('message', (e) => {
   if (e.origin !== location.origin || e.data?.plyukh !== 'spykey' || !spyEl || e.source !== spyEl.querySelector('iframe').contentWindow) return;

@@ -211,6 +211,7 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .spy-head span { flex: 1; color: var(--muted); font-size: 13px; }
 .spy-head button { border: none; background: none; color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer; }
 .spy iframe { flex: 1; width: 100%; border: 0; }
+.gs.role-player .tb.me { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
 .lock-note { font-weight: 600; margin: 4px 0 8px; }
 .qr-dlg { text-align: center; }
 .qr-dlg .dlg-actions { justify-content: center; }

@@ -1,8 +1,8 @@
 // Delivers clue media from the host's browser to phones.
 // Links (http, YouTube) are loaded by the phone itself; stored files and data: URLs are streamed
 // over the JSON data channel in small base64 chunks (PeerJS rejects JSON messages over ~16 KB).
-import * as db from './db.js?v=1792357451862';
-import { kindOf } from './media.js?v=1792357451862';
+import * as db from './db.js?v=1792357741893';
+import { kindOf } from './media.js?v=1792357741893';
 
 const CHUNK = 9000; // bytes per message: 12 000 base64 chars, well under the limit
 const PREFETCH_MAX = 15e6; // bigger files are only sent when their clue is opened
