@@ -1,6 +1,6 @@
 // Played games, kept in this browser (IndexedDB): who played, every question and every answer.
-import * as db from './db.js?v=1792343936758';
-import { store } from './util.js?v=1792343936758';
+import * as db from './db.js?v=1792344179575';
+import { store } from './util.js?v=1792344179575';
 
 const OLD_KEY = 'plyukh-history'; // short summaries from before the detailed history
 

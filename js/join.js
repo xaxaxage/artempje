@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1792343936758';
-import { VERSION } from './version.js?v=1792343936758';
-import { Client, LocalLink } from './net.js?v=1792343936758';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792343936758';
-import { MediaReceiver } from './mediasync.js?v=1792343936758';
-import { createScreen, prefs } from './gameui.js?v=1792343936758';
-import * as screamer from './screamer.js?v=1792343936758';
-import { MiniPlayer } from './minigames.js?v=1792343936758';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1792344179575';
+import { VERSION } from './version.js?v=1792344179575';
+import { Client, LocalLink } from './net.js?v=1792344179575';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792344179575';
+import { MediaReceiver } from './mediasync.js?v=1792344179575';
+import { createScreen, prefs } from './gameui.js?v=1792344179575';
+import * as screamer from './screamer.js?v=1792344179575';
+import { MiniPlayer } from './minigames.js?v=1792344179575';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -273,10 +273,10 @@ function playerPanel(v) {
   if (v.phase === 'clue' && c) {
     if (c.mod) {
       const m = c.mod;
-      const lbl = `${m.icon} Модернизатор «${m.name}»`;
+      const lbl = m.lbl;
       if (m.ask) return { kind: 'choice', lbl, text: m.ask.text, options: m.ask.options };
       if (!m.done) return { kind: 'text', lbl, text: '{team} выбирают…', team: m.team };
-      return { kind: 'text', lbl, text: m.mine ? 'Он достался вашей команде!' : 'Достался команде {team}', team: m.team };
+      return { kind: 'text', lbl, text: m.mine ? 'Достался вашей команде!' : 'Достался команде {team}', team: m.team };
     }
     if (c.single) return singlePanel(c);
     if (c.stage === 'ddIntro') {
@@ -303,9 +303,9 @@ function playerPanel(v) {
   return null;
 }
 
-// One team answers alone: "по очереди", or "Кот в мешке" gave them the question.
+// One team answers alone: "по очереди", or the secret question was handed to them.
 function singlePanel(c) {
-  const lbl = c.only ? 'Кот в мешке' : 'По очереди';
+  const lbl = c.only ? '🤫 Секретный вопрос' : 'По очереди';
   if (c.stage === 'answer') {
     const r = c.result;
     if (!r) return { kind: 'text', lbl, text: 'Никто не ответил' };
@@ -446,13 +446,13 @@ function renderRemote() {
   if (v.phase === 'lobby') info = `<div class="rm-card"><b>${esc(v.title)}</b><p class="muted">Игроки собираются. Начни игру на большом экране.</p></div>`;
   else if (v.phase === 'board' && v.round) {
     const r = v.round;
-    info = `<div class="rm-card"><b>${esc(r.name)}</b><span class="muted small"> · ★ — вопрос-ставка · ⚡ — модернизатор</span>
+    info = `<div class="rm-card"><b>${esc(r.name)}</b><span class="muted small"> · ★ — вопрос-ставка · 🤫 — секретный · ⚡ — модернизатор</span>
       <div class="rm-grid" style="--cols:${r.cats.length}">
         ${r.cats.map((c) => `<div class="rm-cat">${esc(c)}</div>`).join('')}
         ${r.values.map((val, qi) => r.cats.map((_, ci) => {
           const g = r.grid[ci][qi];
           const off = g.u || !g.f;
-          return `<button class="rm-cell ${off ? 'used' : ''}" data-act="pick" data-args='${JSON.stringify({ c: ci, q: qi })}' ${off ? 'disabled' : ''}>${off ? '' : fmt(val) + (g.d ? '★' : '') + (g.m ? '⚡' : '')}</button>`;
+          return `<button class="rm-cell ${off ? 'used' : ''}" data-act="pick" data-args='${JSON.stringify({ c: ci, q: qi })}' ${off ? 'disabled' : ''}>${off ? '' : fmt(val) + (g.d ? '★' : '') + (g.m ? (g.m === 'cat' ? '🤫' : '⚡') : '')}</button>`;
         }).join('')).join('')}
       </div></div>`;
   } else if (v.clue) {

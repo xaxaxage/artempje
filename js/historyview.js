@@ -1,11 +1,11 @@
 // One played game, as it happened: who played, every question in order, and a "time machine"
 // that steps through the game showing the board, the question and the score at that moment.
-import * as db from './db.js?v=1792343936758';
-import { esc, nl2br, fmt, signed, plural, confirmDlg } from './util.js?v=1792343936758';
-import { getGame, removeGame } from './history.js?v=1792343936758';
-import { srcOf } from './media.js?v=1792343936758';
-import { MODS } from './mods.js?v=1792343936758';
-import { GAMES } from './minigames.js?v=1792343936758';
+import * as db from './db.js?v=1792344179575';
+import { esc, nl2br, fmt, signed, plural, confirmDlg } from './util.js?v=1792344179575';
+import { getGame, removeGame } from './history.js?v=1792344179575';
+import { srcOf } from './media.js?v=1792344179575';
+import { MODS } from './mods.js?v=1792344179575';
+import { GAMES } from './minigames.js?v=1792344179575';
 
 const MODE_NAMES = { simple: 'простой режим', buzzer: 'с кнопками' };
 // Team colours are validated for the light surface; these two need a deeper step on the dark one.
@@ -219,7 +219,7 @@ export async function renderHistory(root, id) {
         const cl = clueOf(s) || {};
         const head = s.dd ? `Вопрос-ставка${s.wager != null ? ` · ставка ${fmt(s.wager)}` : ''}` : fmt(s.value);
         const M = s.mod && MODS[s.mod.kind];
-        const mod = M ? `<p class="hv-mod">${M.icon} Модернизатор «${esc(M.name)}» — открыли ${dot(s.mod.team)}${esc(tname(s.mod.team))}${s.mod.target ? `, выбрали ${dot(s.mod.target)}${esc(tname(s.mod.target))}` : ''}</p>` : '';
+        const mod = M ? `<p class="hv-mod">${M.icon} ${s.mod.kind === 'cat' ? esc(M.name) : `Модернизатор «${esc(M.name)}»`} — открыли ${dot(s.mod.team)}${esc(tname(s.mod.team))}${s.mod.target ? `, ${s.mod.kind === 'cat' ? 'отдали' : 'выбрали'} ${dot(s.mod.target)}${esc(tname(s.mod.target))}` : ''}</p>` : '';
         const outs = s.outcomes.length ? s.outcomes.map(outcomeHTML).join('') : '';
         const nobody = !s.outcomes.some((o) => o.ok) && (s.nobody || s.outcomes.some((o) => !o.manual)) ? '<li class="muted"><span>Правильно никто не ответил</span></li>' : '';
         return `<h3>${esc(catOf(s))} <span class="hv-val">${esc(head)}</span></h3>

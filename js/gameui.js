@@ -1,7 +1,7 @@
 // The game screen shared by the host and the players: three layouts, soft themes and the ⚙ popover.
 // Pages build a plain "model" of what to show; this module turns it into DOM and reports clicks back.
-import { esc, nl2br, fmt, store } from './util.js?v=1792343936758';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792343936758';
+import { esc, nl2br, fmt, store } from './util.js?v=1792344179575';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792344179575';
 
 export const THEMES = [['sand', 'Песок', '#5b8a85'], ['studio', 'Студия', '#3a4a85'], ['night', 'Ночь', '#a99cf0'], ['mint', 'Мята', '#4fae8f'], ['lilac', 'Лаванда', '#8c7cc2']];
 export const LAYOUTS = [['a', 'Колонка справа'], ['b', 'Счёт внизу'], ['c', 'Телешоу']];
@@ -224,7 +224,7 @@ export function createScreen(parent, opts) {
       case 'mod':
         return `<div class="g-mod">
           <div class="g-mod-ico">${esc(v.icon)}</div>
-          <p class="g-mod-k">Модернизатор!</p>
+          <p class="g-mod-k">${esc(v.head || 'Модернизатор!')}</p>
           <h2>${esc(v.name)}</h2>
           <p class="g-mod-d">${esc(v.desc)}</p>
           ${v.team ? `<p class="g-mod-who">Открыли: ${teamName(v.team)}</p>` : ''}
