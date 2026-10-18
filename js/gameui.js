@@ -1,7 +1,7 @@
 // The game screen shared by the host and the players: three layouts, soft themes and the ⚙ popover.
 // Pages build a plain "model" of what to show; this module turns it into DOM and reports clicks back.
-import { esc, nl2br, fmt, store } from './util.js?v=1792356188689';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792356188689';
+import { esc, nl2br, fmt, store } from './util.js?v=1792357221843';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792357221843';
 
 export const THEMES = [['sand', 'Песок', '#5b8a85'], ['studio', 'Студия', '#3a4a85'], ['night', 'Ночь', '#a99cf0'], ['mint', 'Мята', '#4fae8f'], ['lilac', 'Лаванда', '#8c7cc2']];
 export const LAYOUTS = [['a', 'Колонка справа'], ['b', 'Счёт внизу'], ['c', 'Телешоу']];
@@ -127,7 +127,7 @@ export function createScreen(parent, opts) {
     let html;
     if (role === 'host') {
       setHTML($('.g-left'), `<button type="button" class="tb back" data-tool="exit" title="Выйти">←</button>`);
-      html = `${t.code ? `<button type="button" class="tb code" data-tool="code" title="Код комнаты и QR">▦ ${esc(t.code)}</button>` : ''}
+      html = `${t.code ? `<button type="button" class="tb code ${t.locked ? 'locked' : ''}" data-tool="code" title="${t.locked ? 'Комната закрыта: новые игроки не зайдут' : 'Код комнаты и QR'}">${t.locked ? '🔒' : '▦'} ${esc(t.code)}</button>` : ''}
         <button type="button" class="tb hide-ph" data-tool="shared" title="Видят ли игроки этот экран">${t.shared ? '📺 Общий экран' : '🖥 Свой экран'}</button>
         <button type="button" class="tb" data-tool="undo" title="Отменить (Ctrl+Z)" ${t.canUndo ? '' : 'disabled'}>↶</button>
         <button type="button" class="tb hide-ph" data-tool="full" title="Во весь экран (F)">⛶</button>

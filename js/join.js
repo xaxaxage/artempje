@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1792356188689';
-import { VERSION } from './version.js?v=1792356188689';
-import { Client, LocalLink } from './net.js?v=1792356188689';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792356188689';
-import { MediaReceiver } from './mediasync.js?v=1792356188689';
-import { createScreen, prefs } from './gameui.js?v=1792356188689';
-import * as screamer from './screamer.js?v=1792356188689';
-import { MiniPlayer } from './minigames.js?v=1792356188689';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1792357221843';
+import { VERSION } from './version.js?v=1792357221843';
+import { Client, LocalLink } from './net.js?v=1792357221843';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792357221843';
+import { MediaReceiver } from './mediasync.js?v=1792357221843';
+import { createScreen, prefs } from './gameui.js?v=1792357221843';
+import * as screamer from './screamer.js?v=1792357221843';
+import { MiniPlayer } from './minigames.js?v=1792357221843';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -179,6 +179,7 @@ function onMsg(d) {
   if (d.t === 'welcome') { pid = d.pid; checkVersion(d.v); screamer.prefetch(); return; }
   if (d.t === 'scare') { setTimeout(() => screamer.scare(), d.delay); return; } // see js/screamer.js
   if (d.t === 'denied') { client.stop(); return messageScreen('Ссылка пульта устарела', 'Открой новую ссылку из меню игры на экране ведущего'); }
+  if (d.t === 'locked') { client.stop(); return messageScreen('Комната закрыта', 'Игра уже идёт, и ведущий закрыл вход. Попроси его открыть комнату — и попробуй снова.', 'Ввести код ещё раз'); }
   if (d.t === 'kicked') {
     client.stop();
     if (d.ban) return messageScreen('Тебя выгнали', 'Ведущий выгнал тебя из этой игры и не пускает обратно.', 'Ввести другой код');
@@ -438,7 +439,7 @@ function mountRemote() {
     <div class="rm-ctl"></div>
     <div class="rm-players"></div>
     <div class="rm-kick"></div>
-    <div class="rm-foot"><button class="btn" data-act="undo">↶ Отменить последнее</button></div>
+    <div class="rm-foot"><button class="btn" data-act="undo">↶ Отменить последнее</button> <button class="btn" data-act="lock"></button></div>
   </div>`;
   bindControls($('.rm', app), (a, args) => {
     if (!client.send({ t: 'act', a, args })) toast('Нет связи с экраном');
@@ -494,6 +495,7 @@ function renderRemote() {
       <button class="btn small" data-act="adj" data-args='${esc(JSON.stringify({ team: t.id, delta: 100 }))}'>+</button>
     </div>`).join('')}</div>`);
   $('.rm-foot [data-act=undo]', app).disabled = !v.canUndo;
+  $('.rm-foot [data-act=lock]', app).textContent = v.locked ? '🔓 Открыть комнату' : '🔒 Закрыть комнату';
 }
 
 // ---------- shared ----------

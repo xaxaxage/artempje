@@ -1,19 +1,19 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1792356188689';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792356188689';
-import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792356188689';
-import { mediaEl, kindOf } from './media.js?v=1792356188689';
-import { play as sfx, sound, unlock } from './sound.js?v=1792356188689';
-import { Host, errText, hostChannelName } from './net.js?v=1792356188689';
-import { setHTML } from './controls.js?v=1792356188689';
-import { saveGame } from './history.js?v=1792356188689';
-import { MediaSender, describe } from './mediasync.js?v=1792356188689';
-import { VERSION } from './version.js?v=1792356188689';
-import { createScreen } from './gameui.js?v=1792356188689';
-import * as screamer from './screamer.js?v=1792356188689';
-import { MODS, modHead, resolveMod } from './mods.js?v=1792356188689';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792356188689';
+import * as db from './db.js?v=1792357221843';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792357221843';
+import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792357221843';
+import { mediaEl, kindOf } from './media.js?v=1792357221843';
+import { play as sfx, sound, unlock } from './sound.js?v=1792357221843';
+import { Host, errText, hostChannelName } from './net.js?v=1792357221843';
+import { setHTML } from './controls.js?v=1792357221843';
+import { saveGame } from './history.js?v=1792357221843';
+import { MediaSender, describe } from './mediasync.js?v=1792357221843';
+import { VERSION } from './version.js?v=1792357221843';
+import { createScreen } from './gameui.js?v=1792357221843';
+import * as screamer from './screamer.js?v=1792357221843';
+import { MODS, modHead, resolveMod } from './mods.js?v=1792357221843';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792357221843';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 'off', mini: 'rare', secret: 'one' };
@@ -123,7 +123,11 @@ export async function startPlay(root, boardId) {
     const prev = hist.pop();
     if (!prev) return toast('Нечего отменять');
     const online = Object.fromEntries(S.players.map((p) => [p.id, p.online]));
+    // Undo is about the game, not about who may come in: the lock and the kicked list stay as they are.
+    const { locked, kicked, banned } = S;
     S = JSON.parse(prev);
+    Object.assign(S, { locked, kicked, banned });
+    S.players = S.players.filter((p) => !kicked.includes(p.id));
     for (const p of S.players) p.online = !!online[p.id];
     clearBuzz();
     toast('Отменено');
@@ -600,6 +604,11 @@ export async function startPlay(root, boardId) {
     kick({ pid, ban }) {
       kick(pid, !!ban);
     },
+    // A closed room lets nobody new in; whoever is already playing can still reconnect.
+    lock({ on } = {}) {
+      S.locked = on ?? !S.locked;
+      toast(S.locked ? 'Комната закрыта: новые игроки не зайдут' : 'Комната открыта: можно заходить по коду');
+    },
     mini({ kind } = {}) {
       if (S.phase === 'board' && usesPhones()) startMini(kind);
     },
@@ -667,6 +676,11 @@ export async function startPlay(root, boardId) {
     }
     if (S.kicked.includes(d.pid)) {
       net.send(conn, { t: 'kicked', ban: !!S.banned?.includes(d.pid) });
+      setTimeout(() => conn.close(), 400);
+      return;
+    }
+    if (S.locked && !player(d.pid)) {
+      net.send(conn, { t: 'locked' });
       setTimeout(() => conn.close(), 400);
       return;
     }
@@ -990,6 +1004,7 @@ export async function startPlay(root, boardId) {
       controls: controls(),
       players: S.players.map((p) => ({ id: p.id, name: p.name, team: solo() ? '' : team(p.teamId)?.name || '', color: team(p.teamId)?.color || '#999', online: !p.phone || p.online })),
       canUndo: hist.length > 0,
+      locked: !!S.locked,
     };
   }
 
@@ -1444,6 +1459,7 @@ export async function startPlay(root, boardId) {
             <div class="room-code">${esc(S.code)}</div>
             <div class="qr-big">${qrSvg(joinUrl())}</div>
             <button class="link-btn" data-copy="join">Скопировать ссылку для входа</button>
+            <button class="link-btn lock-btn" data-lock></button>
             <div class="remote-card">
               <div><b>Пульт ведущего на телефоне</b><p class="muted small">Видишь правильные ответы и управляешь игрой со своего телефона. QR пульта откроется отдельно — чтобы игроки его не увидели.</p>
               <button class="btn small" data-remote>Показать QR пульта</button> <button class="link-btn" data-copy="remote">Скопировать ссылку</button></div>
@@ -1462,6 +1478,7 @@ export async function startPlay(root, boardId) {
         </div>`;
       root.querySelectorAll('[data-copy]').forEach((b) => b.addEventListener('click', () => copyText(b.dataset.copy === 'join' ? joinUrl() : remoteUrl())));
       $('[data-remote]', root)?.addEventListener('click', showRemoteQR);
+      $('[data-lock]', root)?.addEventListener('click', () => act('lock'));
       $('.add-player', root).addEventListener('submit', (e) => {
         e.preventDefault();
         const i = $('.add-player input', root);
@@ -1490,6 +1507,8 @@ export async function startPlay(root, boardId) {
       });
     }
     root.querySelectorAll('[data-tm]').forEach((b) => b.classList.toggle('primary', b.dataset.tm === S.teamMode));
+    const lockBtn = $('[data-lock]', root);
+    if (lockBtn) lockBtn.textContent = S.locked ? '🔒 Комната закрыта — открыть' : '🔒 Закрыть комнату';
     root.querySelectorAll('[data-am]').forEach((b) => b.classList.toggle('primary', b.dataset.am === settings.answer));
     $('.am-hint', root).textContent = turns()
       ? 'Команды отвечают по кругу, кнопки не нужны. Ответили верно — выбираете вопрос для следующей команды.'
@@ -1551,6 +1570,7 @@ export async function startPlay(root, boardId) {
       links: () => [
         { name: 'hostwin', label: '👁 Окно ведущего (для трансляции)' },
         ...(usesPhones() ? [{ name: 'remote', label: '📱 Пульт на телефоне (QR)' }] : []),
+        ...(usesPhones() ? [{ name: 'lock', label: S.locked ? '🔓 Открыть комнату' : '🔒 Закрыть комнату — новые не зайдут' }] : []),
         ...(usesPhones() ? [{ name: 'players', label: '👥 Игроки — выгнать или перевести' }] : []),
         { name: 'addTeam', label: '+ Добавить команду' },
         ...(usesPhones() && S.phase === 'board' ? [{ name: 'mini', label: '🎮 Мини-игра прямо сейчас' }] : []),
@@ -1566,7 +1586,7 @@ export async function startPlay(root, boardId) {
     screen.update({
       title: board.title,
       round: S.phase === 'final' ? 'Финал' : R()?.name || '',
-      tools: { code: usesPhones() ? S.code : null, canUndo: hist.length > 0, shared: settings.shared },
+      tools: { code: usesPhones() ? S.code : null, locked: !!S.locked, canUndo: hist.length > 0, shared: settings.shared },
       view: viewFor(null),
       teams: teamsFor(null),
       panel: hostPanel(),
@@ -1592,6 +1612,7 @@ export async function startPlay(root, boardId) {
         if (d.name === 'remote') return showRemoteQR();
         if (d.name === 'mini') return act('mini');
         if (d.name === 'players') return playersDialog();
+        if (d.name === 'lock') return act('lock');
         if (d.name === 'addTeam') {
           const name = await promptDlg('Название команды', '', { placeholder: 'Например, Котики' });
           if (name != null) { newTeam(name.trim() || undefined); if (!team(S.picker)) S.picker = S.teams[0].id; commit(); }
@@ -1616,12 +1637,17 @@ export async function startPlay(root, boardId) {
     else document.documentElement.requestFullscreen?.().catch(() => {});
   }
 
-  function showQR() {
-    dialog({
+  async function showQR() {
+    const r = await dialog({
       cls: 'qr-dlg',
-      html: `<div class="room-code">${esc(S.code)}</div><div class="qr-big">${qrSvg(joinUrl())}</div><p class="muted">${esc(joinUrl())}</p>`,
-      buttons: [{ label: 'Скопировать ссылку', value: () => { copyText(joinUrl()); } }, { label: 'Закрыть', value: true, cls: 'primary' }],
+      html: `<div class="room-code">${esc(S.code)}</div>${S.locked ? '<p class="lock-note">🔒 Комната закрыта: новые игроки не зайдут, пока ты её не откроешь</p>' : ''}<div class="qr-big">${qrSvg(joinUrl())}</div><p class="muted">${esc(joinUrl())}</p>`,
+      buttons: [
+        { label: 'Скопировать ссылку', value: () => { copyText(joinUrl()); } },
+        { label: S.locked ? '🔓 Открыть комнату' : '🔒 Закрыть комнату', value: 'lock' },
+        { label: 'Готово', value: true, cls: 'primary' },
+      ],
     });
+    if (r === 'lock') act('lock');
   }
 
   function showRemoteQR() {

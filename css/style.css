@@ -203,6 +203,7 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .pl-row .muted { flex: 1; min-width: 0; }
 .pl-go { font-size: 1.2rem; color: var(--muted); }
 .lobby-tip { margin: 4px 0 0; }
+.lock-note { font-weight: 600; margin: 4px 0 8px; }
 .qr-dlg { text-align: center; }
 .qr-dlg .dlg-actions { justify-content: center; }
 @keyframes fade { from { opacity: 0; } }
