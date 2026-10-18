@@ -1,19 +1,19 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1792344179575';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792344179575';
-import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792344179575';
-import { mediaEl, kindOf } from './media.js?v=1792344179575';
-import { play as sfx, sound, unlock } from './sound.js?v=1792344179575';
-import { Host, errText, hostChannelName } from './net.js?v=1792344179575';
-import { setHTML } from './controls.js?v=1792344179575';
-import { saveGame } from './history.js?v=1792344179575';
-import { MediaSender, describe } from './mediasync.js?v=1792344179575';
-import { VERSION } from './version.js?v=1792344179575';
-import { createScreen } from './gameui.js?v=1792344179575';
-import * as screamer from './screamer.js?v=1792344179575';
-import { MODS, modHead, resolveMod } from './mods.js?v=1792344179575';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792344179575';
+import * as db from './db.js?v=1792356188689';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792356188689';
+import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792356188689';
+import { mediaEl, kindOf } from './media.js?v=1792356188689';
+import { play as sfx, sound, unlock } from './sound.js?v=1792356188689';
+import { Host, errText, hostChannelName } from './net.js?v=1792356188689';
+import { setHTML } from './controls.js?v=1792356188689';
+import { saveGame } from './history.js?v=1792356188689';
+import { MediaSender, describe } from './mediasync.js?v=1792356188689';
+import { VERSION } from './version.js?v=1792356188689';
+import { createScreen } from './gameui.js?v=1792356188689';
+import * as screamer from './screamer.js?v=1792356188689';
+import { MODS, modHead, resolveMod } from './mods.js?v=1792356188689';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792356188689';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 'off', mini: 'rare', secret: 'one' };
@@ -597,6 +597,9 @@ export async function startPlay(root, boardId) {
       log({ k: 'end', scores: scoreMap() });
       sfx('win');
     },
+    kick({ pid, ban }) {
+      kick(pid, !!ban);
+    },
     mini({ kind } = {}) {
       if (S.phase === 'board' && usesPhones()) startMini(kind);
     },
@@ -663,7 +666,7 @@ export async function startPlay(root, boardId) {
       return;
     }
     if (S.kicked.includes(d.pid)) {
-      net.send(conn, { t: 'kicked' });
+      net.send(conn, { t: 'kicked', ban: !!S.banned?.includes(d.pid) });
       setTimeout(() => conn.close(), 400);
       return;
     }
@@ -731,14 +734,18 @@ export async function startPlay(root, boardId) {
     sendTo(pid);
   }
 
-  function kick(pid) {
+  // Sends a player out of the room. A kicked phone forgets its id, so it can come back with the room
+  // code as a new player; a banned one keeps it and is turned away until the game ends.
+  function kick(pid, ban = false) {
     const p = player(pid);
+    if (!p) return;
     const conn = conns.get(pid);
-    if (conn) { net.send(conn, { t: 'kicked' }); setTimeout(() => { try { conn.close(); } catch {} }, 300); conns.delete(pid); }
+    if (conn) { net.send(conn, { t: 'kicked', ban }); setTimeout(() => { try { conn.close(); } catch {} }, 300); conns.delete(pid); }
     if (!S.kicked.includes(pid)) S.kicked.push(pid);
+    if (ban) (S.banned ||= []).push(pid);
     S.players = S.players.filter((x) => x.id !== pid);
-    if (p && solo() && !members(p.teamId).length) removeTeam(p.teamId);
-    commit();
+    if (solo() && !members(p.teamId).length) removeTeam(p.teamId);
+    toast(ban ? `${p.name} выгнан(а) насовсем` : `${p.name} выгнан(а)`);
   }
 
   function removeTeam(tid) {
@@ -887,7 +894,7 @@ export async function startPlay(root, boardId) {
       if (t.id === mine) cls.push('mine');
       return {
         id: t.id, name: t.name, color: t.color, score: t.score, badge, cls, step: step(),
-        members: solo() ? [] : members(t.id).map((p) => ({ name: p.name, online: !p.phone || p.online })),
+        members: solo() ? [] : members(t.id).map((p) => ({ id: pid == null ? p.id : undefined, name: p.name, online: !p.phone || p.online })),
         sub: solo() ? '' : members(t.id).length ? '' : usesPhones() ? 'пока никого' : '',
         joinable: pid != null && !solo() && (S.phase === 'lobby' || !team(mine)), mine: t.id === mine,
       };
@@ -981,6 +988,7 @@ export async function startPlay(root, boardId) {
       fin: S.phase === 'final' ? { cat: board.final.category, q: board.final.q, a: board.final.a, stage: S.fin.stage, status: statusText() } : null,
       teams: S.teams.map((t) => ({ id: t.id, name: t.name, color: t.color, score: t.score, online: canPlay(t), members: members(t.id).map((p) => p.name), picker: S.picker === t.id })),
       controls: controls(),
+      players: S.players.map((p) => ({ id: p.id, name: p.name, team: solo() ? '' : team(p.teamId)?.name || '', color: team(p.teamId)?.color || '#999', online: !p.phone || p.online })),
       canUndo: hist.length > 0,
     };
   }
@@ -1444,6 +1452,7 @@ export async function startPlay(root, boardId) {
           <div class="team-mode"><button class="btn small" data-am="buzz">⚡ Кто быстрее</button><button class="btn small" data-am="turns">🔁 По очереди</button></div>
           <p class="muted small am-hint"></p>
           <div class="lobby-teams"></div>
+          <p class="muted small lobby-tip" hidden>Нажми на имя игрока, чтобы перевести его в другую команду или выгнать.</p>
           <div class="lobby-free"></div>
           <form class="add-player">
             <input class="input" maxlength="24" placeholder="Название команды">
@@ -1494,8 +1503,11 @@ export async function startPlay(root, boardId) {
           <button type="button" class="lt-name" data-trename="${esc(t.id)}" title="Переименовать">${esc(t.name)}</button>
           ${solo() ? '' : `<div class="lt-members">${members(t.id).map(chip).join('') || `<span class="muted small">${usesPhones() ? 'игроки выбирают команду на телефоне' : 'команда без телефонов'}</span>`}</div>`}
         </div>
-        <button type="button" class="icon-btn" data-tdel="${esc(t.id)}" title="Убрать команду">×</button>
+        ${solo() && members(t.id)[0] ? `<button type="button" class="icon-btn" data-pmenu="${esc(members(t.id)[0].id)}" title="Выгнать игрока">×</button>` : `<button type="button" class="icon-btn" data-tdel="${esc(t.id)}" title="Убрать команду">×</button>`}
       </div>`).join('') : `<div class="lp empty muted">${usesPhones() ? 'Пока никого… ждём игроков' : 'Добавь команды ниже'}</div>`);
+    $('.lobby-tip', root).hidden = !S.players.length;
+    if (solo()) $('.lobby-tip', root).textContent = 'Чтобы выгнать игрока, нажми × рядом с ним.';
+    else $('.lobby-tip', root).textContent = 'Нажми на имя игрока, чтобы перевести его в другую команду или выгнать.';
     const free = S.players.filter((p) => !team(p.teamId));
     setHTML($('.lobby-free', root), free.length && !solo() ? `<div class="muted small">Ещё не выбрали команду:</div><div class="lt-members">${free.map(chip).join('')}</div>` : '');
     const n = solo() ? S.teams.length : S.players.length;
@@ -1539,6 +1551,7 @@ export async function startPlay(root, boardId) {
       links: () => [
         { name: 'hostwin', label: '👁 Окно ведущего (для трансляции)' },
         ...(usesPhones() ? [{ name: 'remote', label: '📱 Пульт на телефоне (QR)' }] : []),
+        ...(usesPhones() ? [{ name: 'players', label: '👥 Игроки — выгнать или перевести' }] : []),
         { name: 'addTeam', label: '+ Добавить команду' },
         ...(usesPhones() && S.phase === 'board' ? [{ name: 'mini', label: '🎮 Мини-игра прямо сейчас' }] : []),
         ...(['board', 'clue'].includes(S.phase) ? [{ name: 'endRound', label: 'Завершить раунд досрочно' }] : []),
@@ -1566,6 +1579,7 @@ export async function startPlay(root, boardId) {
       case 'act': return act(d.a, d.args);
       case 'adj': return act('adj', { team: d.team, delta: d.delta });
       case 'teamMenu': return teamMenu(d.team);
+      case 'playerMenu': return playerMenu(d.pid);
       case 'tool':
         if (d.name === 'code') return showQR();
         if (d.name === 'undo') return act('undo');
@@ -1577,6 +1591,7 @@ export async function startPlay(root, boardId) {
         if (d.name === 'hostwin') return openHostWindow();
         if (d.name === 'remote') return showRemoteQR();
         if (d.name === 'mini') return act('mini');
+        if (d.name === 'players') return playersDialog();
         if (d.name === 'addTeam') {
           const name = await promptDlg('Название команды', '', { placeholder: 'Например, Котики' });
           if (name != null) { newTeam(name.trim() || undefined); if (!team(S.picker)) S.picker = S.teams[0].id; commit(); }
@@ -1654,12 +1669,32 @@ export async function startPlay(root, boardId) {
       cls: 'menu-dlg',
       buttons: [
         ...(solo() ? [] : S.teams.filter((t) => t.id !== p.teamId).map((t) => ({ label: `→ В команду «${t.name}»`, value: `t:${t.id}` }))),
-        { label: 'Убрать из игры', value: 'kick', cls: 'danger' },
+        { label: 'Выгнать', value: 'kick', cls: 'danger' },
+        { label: 'Выгнать и не пускать обратно', value: 'ban', cls: 'danger' },
         { label: 'Закрыть', value: null, cls: 'ghost' },
       ],
     });
     if (r?.startsWith?.('t:')) { p.teamId = r.slice(2); commit(); }
-    if (r === 'kick' && (await confirmDlg(`Убрать ${p.name} из игры?`, 'Убрать', true))) kick(pid);
+    if (r === 'kick' && (await confirmDlg(`Выгнать ${p.name}? Очки команды останутся, а зайти снова можно по коду комнаты.`, 'Выгнать', true))) act('kick', { pid });
+    if (r === 'ban' && (await confirmDlg(`Выгнать ${p.name} и больше не пускать в эту игру?`, 'Выгнать', true))) act('kick', { pid, ban: true });
+  }
+
+  // Everyone in the room, to move or kick them during the game (⚙ → «Игроки»).
+  async function playersDialog() {
+    if (!S.players.length) return toast('Пока никто не зашёл');
+    const row = (p) => {
+      const t = team(p.teamId);
+      const st = p.phone ? (p.online ? 'на связи' : 'не на связи') : 'без телефона';
+      return `<button type="button" class="pl-row" data-p="${esc(p.id)}"><span class="dot ${!p.phone || p.online ? 'on' : 'off'}"></span><b>${esc(p.name)}</b><span class="muted small">${solo() || !t ? '' : `${esc(t.name)} · `}${st}</span><span class="pl-go">›</span></button>`;
+    };
+    const pid = await dialog({
+      title: `Игроки (${S.players.length})`,
+      html: `<div class="pl-list">${S.players.map(row).join('')}</div>`,
+      cls: 'menu-dlg',
+      buttons: [{ label: 'Закрыть', value: null, cls: 'ghost' }],
+      onMount: (w, close) => w.querySelector('.pl-list').addEventListener('click', (e) => { const b = e.target.closest('[data-p]'); if (b) close(b.dataset.p); }),
+    });
+    if (pid) playerMenu(pid);
   }
 
   // ---------- timers ----------

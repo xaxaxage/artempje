@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1792344179575';
-import { VERSION } from './version.js?v=1792344179575';
-import { Client, LocalLink } from './net.js?v=1792344179575';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792344179575';
-import { MediaReceiver } from './mediasync.js?v=1792344179575';
-import { createScreen, prefs } from './gameui.js?v=1792344179575';
-import * as screamer from './screamer.js?v=1792344179575';
-import { MiniPlayer } from './minigames.js?v=1792344179575';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1792356188689';
+import { VERSION } from './version.js?v=1792356188689';
+import { Client, LocalLink } from './net.js?v=1792356188689';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792356188689';
+import { MediaReceiver } from './mediasync.js?v=1792356188689';
+import { createScreen, prefs } from './gameui.js?v=1792356188689';
+import * as screamer from './screamer.js?v=1792356188689';
+import { MiniPlayer } from './minigames.js?v=1792356188689';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -140,13 +140,13 @@ function nameScreen() {
   $('[data-other]', app).addEventListener('click', () => leave());
 }
 
-function messageScreen(title, text, retry = false) {
+function messageScreen(title, text, retry = '') {
   mounted = false;
   mini.close();
   screen?.destroy();
   screen = null;
   app.innerHTML = `<div class="ph-center">${homeLink}${logo}<h1>${esc(title)}</h1><p class="muted">${esc(text)}</p>
-    ${retry ? '<button class="btn primary big wide" data-retry>Войти снова</button>' : ''}</div>`;
+    ${retry ? `<button class="btn primary big wide" data-retry>${esc(retry)}</button>` : ''}</div>`;
   $('[data-retry]', app)?.addEventListener('click', () => { code = ''; history.replaceState(null, '', '?'); codeScreen(); });
 }
 
@@ -179,7 +179,13 @@ function onMsg(d) {
   if (d.t === 'welcome') { pid = d.pid; checkVersion(d.v); screamer.prefetch(); return; }
   if (d.t === 'scare') { setTimeout(() => screamer.scare(), d.delay); return; } // see js/screamer.js
   if (d.t === 'denied') { client.stop(); return messageScreen('Ссылка пульта устарела', 'Открой новую ссылку из меню игры на экране ведущего'); }
-  if (d.t === 'kicked') { client.stop(); store.del('plyukh-pid-' + code); return messageScreen('Ты вне игры', 'Ведущий убрал тебя из этой комнаты', true); }
+  if (d.t === 'kicked') {
+    client.stop();
+    if (d.ban) return messageScreen('Тебя выгнали', 'Ведущий выгнал тебя из этой игры и не пускает обратно.', 'Ввести другой код');
+    // Forget this room's id: coming back with the code makes a new player.
+    store.del('plyukh-pid-' + code);
+    return messageScreen('Тебя выгнали', 'Ведущий убрал тебя из игры. Вернуться можно по коду комнаты.', 'Войти снова');
+  }
   if (d.t !== 'state' && d.t !== 'hstate') return;
   view = d;
   if (d.t === 'state') {
@@ -431,6 +437,7 @@ function mountRemote() {
     <div class="rm-info"></div>
     <div class="rm-ctl"></div>
     <div class="rm-players"></div>
+    <div class="rm-kick"></div>
     <div class="rm-foot"><button class="btn" data-act="undo">↶ Отменить последнее</button></div>
   </div>`;
   bindControls($('.rm', app), (a, args) => {
@@ -471,6 +478,13 @@ function renderRemote() {
   else if (v.phase === 'end') info = `<div class="rm-card"><b>Игра окончена</b></div>`;
   setHTML($('.rm-info', app), info);
   setHTML($('.rm-ctl', app), controlsHTML(v.controls || []));
+  const players = v.players || [];
+  setHTML($('.rm-kick', app), players.length ? `<div class="rm-card"><div class="muted small">Игроки</div>${players.map((p) => `
+    <div class="rm-p">
+      <span class="dot" style="background:${esc(p.color)}"></span>
+      <span class="rm-pn ${p.online ? '' : 'muted'}">${esc(p.name)}${p.team ? ` <small class="muted">${esc(p.team)}</small>` : ''}${p.online ? '' : ' <small>(не на связи)</small>'}</span>
+      <button class="btn small" data-kick="${esc(p.id)}" data-name="${esc(p.name)}">Выгнать</button>
+    </div>`).join('')}</div>` : '');
   setHTML($('.rm-players', app), `<div class="rm-card"><div class="muted small">Команды (± по 100)</div>${(v.teams || []).map((t) => `
     <div class="rm-p ${t.picker ? 'picker' : ''}">
       <span class="dot" style="background:${esc(t.color)}"></span>
@@ -498,7 +512,23 @@ setInterval(() => {
 
 app.addEventListener('click', (e) => {
   if (e.target.closest('[data-menu]')) openMenu();
+  const k = e.target.closest('[data-kick]');
+  if (k && role === 'host') kickFromRemote(k.dataset.kick, k.dataset.name);
 });
+
+async function kickFromRemote(pid, who) {
+  const r = await dialog({
+    title: `Выгнать ${who}?`,
+    html: '<p class="muted">Очки команды останутся. Просто выгнанный может зайти снова по коду комнаты.</p>',
+    cls: 'menu-dlg',
+    buttons: [
+      { label: 'Выгнать', value: 'kick', cls: 'danger' },
+      { label: 'Выгнать и не пускать обратно', value: 'ban', cls: 'danger' },
+      { label: 'Отмена', value: null, cls: 'ghost' },
+    ],
+  });
+  if (r && !client?.send({ t: 'act', a: 'kick', args: { pid, ban: r === 'ban' } })) toast('Нет связи с экраном');
+}
 
 document.addEventListener('keydown', (e) => {
   if (e.code === 'Space' && role === 'player' && mounted === 'player' && !e.target.closest('input, textarea') && !document.querySelector('.dlg-wrap')) {

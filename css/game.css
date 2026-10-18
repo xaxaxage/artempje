@@ -145,6 +145,8 @@
 .g-team .t-name button { all: unset; cursor: pointer; }
 .g-team .t-mem { color: var(--g-muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .g-team .t-mem .off { opacity: .45; }
+.g-team .t-pl { all: unset; cursor: pointer; }
+.g-team .t-pl:hover { text-decoration: underline; color: var(--g-ink); }
 .g-team .t-score { font-weight: 800; font-size: 22px; font-variant-numeric: tabular-nums; }
 .g-team .t-pm { display: flex; gap: 4px; }
 .g-team .t-pm button { width: 28px; height: 28px; border-radius: 9px; border: 1px solid var(--g-line); background: var(--g-soft); color: var(--g-ink); font-weight: 700; cursor: pointer; }

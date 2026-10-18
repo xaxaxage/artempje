@@ -197,6 +197,12 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .dlg-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 16px; }
 .menu-dlg .dlg-actions { flex-direction: column; align-items: stretch; }
 .menu-dlg.wide .dlg-actions { flex-direction: row; justify-content: flex-end; }
+.pl-list { display: flex; flex-direction: column; gap: 6px; max-height: 55vh; overflow: hidden auto; }
+.pl-row { font: inherit; color: inherit; display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--field); cursor: pointer; }
+.pl-row:hover { border-color: var(--orange); }
+.pl-row .muted { flex: 1; min-width: 0; }
+.pl-go { font-size: 1.2rem; color: var(--muted); }
+.lobby-tip { margin: 4px 0 0; }
 .qr-dlg { text-align: center; }
 .qr-dlg .dlg-actions { justify-content: center; }
 @keyframes fade { from { opacity: 0; } }

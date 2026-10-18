@@ -1,7 +1,7 @@
 // The game screen shared by the host and the players: three layouts, soft themes and the ⚙ popover.
 // Pages build a plain "model" of what to show; this module turns it into DOM and reports clicks back.
-import { esc, nl2br, fmt, store } from './util.js?v=1792344179575';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792344179575';
+import { esc, nl2br, fmt, store } from './util.js?v=1792356188689';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792356188689';
 
 export const THEMES = [['sand', 'Песок', '#5b8a85'], ['studio', 'Студия', '#3a4a85'], ['night', 'Ночь', '#a99cf0'], ['mint', 'Мята', '#4fae8f'], ['lilac', 'Лаванда', '#8c7cc2']];
 export const LAYOUTS = [['a', 'Колонка справа'], ['b', 'Счёт внизу'], ['c', 'Телешоу']];
@@ -70,6 +70,8 @@ export function createScreen(parent, opts) {
     if (cell && !cell.disabled) { const [c, q] = cell.dataset.pick.split(',').map(Number); return on('pick', { c, q }); }
     const adj = t.closest('[data-adj]');
     if (adj) return on('adj', { team: adj.dataset.adj, delta: +adj.dataset.d });
+    const pm = t.closest('[data-player]');
+    if (pm) return on('playerMenu', { pid: pm.dataset.player });
     const tm = t.closest('[data-tmenu]');
     if (tm) return on('teamMenu', { team: tm.dataset.tmenu });
     const choice = t.closest('[data-choice]');
@@ -264,7 +266,7 @@ export function createScreen(parent, opts) {
         ${t.badge ? `<span class="t-badge">${esc(t.badge)}</span>` : ''}
         <div class="t-main">
           <div class="t-name">${host ? `<button type="button" data-tmenu="${esc(t.id)}" title="Действия с командой">${esc(t.name)}</button>` : esc(t.name)}</div>
-          <div class="t-mem">${t.members?.length ? t.members.map((p) => `<span class="${p.online === false ? 'off' : ''}">${esc(p.name)}</span>`).join(', ') : esc(t.sub || '')}</div>
+          <div class="t-mem">${t.members?.length ? t.members.map((p) => p.id ? `<button type="button" class="t-pl ${p.online === false ? 'off' : ''}" data-player="${esc(p.id)}" title="Перевести или выгнать">${esc(p.name)}</button>` : `<span class="${p.online === false ? 'off' : ''}">${esc(p.name)}</span>`).join(', ') : esc(t.sub || '')}</div>
           ${t.joinable ? `<button type="button" class="btn small g-join" data-join="${esc(t.id)}">${t.mine ? 'Ты здесь' : 'Вступить'}</button>` : ''}
         </div>
         <div class="t-score ${t.score < 0 ? 'neg' : ''}">${fmt(t.score)}</div>
