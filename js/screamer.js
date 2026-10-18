@@ -2,7 +2,7 @@
 // Foxy (keyed off his green screen in WebGL) jumps out of a dark background with the scream at full
 // loudness, no warning. Then the game is back as if nothing happened.
 // The scream (assets/screamer.wav) is normalized and soft-clipped to be as loud as a file can be.
-import { store } from './util.js?v=1791919655137';
+import { store } from './util.js?v=1792343936758';
 
 const VIDEO = new URL('../assets/screamer.mp4', import.meta.url).href;
 const SOUND = new URL('../assets/screamer.wav', import.meta.url).href;

@@ -352,6 +352,7 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .hv-val { color: var(--orange); white-space: nowrap; }
 .hv-q { font-size: 1.15rem; font-weight: 600; margin: 8px 0; overflow-wrap: anywhere; }
 .hv-a { margin: 8px 0; }
+.hv-mod { display: inline-block; margin: 4px 0; padding: 6px 10px; border-radius: 8px; font-weight: 600; background: color-mix(in srgb, var(--orange) 14%, transparent); }
 .hv-a b { color: var(--green); }
 .hv-media img, .hv-media video { max-width: 100%; max-height: 220px; border-radius: 10px; display: block; }
 .hv-media audio { width: 100%; }
@@ -872,6 +873,11 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .ed-cell.empty .v { opacity: 1; }
 .ed-cell.warn { border-color: var(--yellow); }
 .ed-cell.warn::after { content: 'нет ответа'; position: absolute; left: 10px; bottom: 6px; font-size: .68rem; font-weight: 700; color: var(--yellow); }
+.ed-cell.mod { background: var(--orange); box-shadow: 0 3px 0 var(--orange-dark); }
+.ce-mod { margin-top: 6px; }
+.ce-mod select { max-width: 420px; }
+.ce-mod.on select { border-color: var(--orange); }
+.ce-mod-desc { margin: 6px 0 0; min-height: 1em; }
 .ed-hint { margin-top: 14px; }
 .final-ed { max-width: 760px; }
 

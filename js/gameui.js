@@ -1,7 +1,7 @@
 // The game screen shared by the host and the players: three layouts, soft themes and the ⚙ popover.
 // Pages build a plain "model" of what to show; this module turns it into DOM and reports clicks back.
-import { esc, nl2br, fmt, store } from './util.js?v=1791919655137';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791919655137';
+import { esc, nl2br, fmt, store } from './util.js?v=1792343936758';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792343936758';
 
 export const THEMES = [['sand', 'Песок', '#5b8a85'], ['studio', 'Студия', '#3a4a85'], ['night', 'Ночь', '#a99cf0'], ['mint', 'Мята', '#4fae8f'], ['lilac', 'Лаванда', '#8c7cc2']];
 export const LAYOUTS = [['a', 'Колонка справа'], ['b', 'Счёт внизу'], ['c', 'Телешоу']];
@@ -20,7 +20,7 @@ function textScale(t, media) {
 }
 
 const teamName = (t) => (t ? `<span style="color:${esc(t.color)}">${esc(t.name)}</span>` : '');
-const fill = (s, t) => esc(s || '').replace('{team}', teamName(t));
+const fill = (s, t, t2) => esc(s || '').replace('{team}', teamName(t)).replace('{team2}', teamName(t2));
 
 /**
  * @param {HTMLElement} parent
@@ -72,6 +72,8 @@ export function createScreen(parent, opts) {
     if (adj) return on('adj', { team: adj.dataset.adj, delta: +adj.dataset.d });
     const tm = t.closest('[data-tmenu]');
     if (tm) return on('teamMenu', { team: tm.dataset.tmenu });
+    const choice = t.closest('[data-choice]');
+    if (choice) return on('choice', { id: choice.dataset.choice });
     const join = t.closest('[data-join]');
     if (join) return on('join', { team: join.dataset.join });
     const tool = t.closest('[data-tool]');
@@ -219,6 +221,29 @@ export function createScreen(parent, opts) {
         return `<h2>Вопрос-ставка!</h2><div class="big">${esc(v.cat || '')}</div><p>${fill(v.text, v.team)}</p>`;
       case 'roundEnd':
         return `<h2>${esc(v.head)}</h2>${standingsHTML(v.standings)}`;
+      case 'mod':
+        return `<div class="g-mod">
+          <div class="g-mod-ico">${esc(v.icon)}</div>
+          <p class="g-mod-k">Модернизатор!</p>
+          <h2>${esc(v.name)}</h2>
+          <p class="g-mod-d">${esc(v.desc)}</p>
+          ${v.team ? `<p class="g-mod-who">Открыли: ${teamName(v.team)}</p>` : ''}
+          ${v.changes?.length ? `<ul class="g-mod-ch">${v.changes.map((x) => `<li><span class="g-dot" style="background:${esc(x.color)}"></span><span class="n">${esc(x.name)}</span><s>${fmt(x.from)}</s><span class="ar">→</span><b class="${x.to < 0 ? 'neg' : ''}">${fmt(x.to)}</b></li>`).join('')}</ul>` : ''}
+          ${v.note ? `<p class="g-mod-note">${esc(v.note)}</p>` : ''}
+          ${v.wait ? `<p class="g-mod-wait">${fill(v.wait, v.team)}</p>` : ''}
+        </div>`;
+      case 'mini': {
+        const rows = (v.rows || []).map((r) => `<li class="${r.win ? 'win' : ''} ${r.me ? 'me' : ''} ${r.ok ? 'ok' : ''}"><span class="g-dot" style="background:${esc(r.color)}"></span><span class="n">${esc(r.name)}${r.team ? ` <small>${esc(r.team)}</small>` : ''}</span><b>${esc(r.res)}</b></li>`).join('');
+        const sub = v.stage === 'intro' ? esc(v.rule) : v.stage === 'play' ? 'Играем на телефонах!' : v.win ? `Победа: ${fill(v.win.text, v.win.team)}` : 'Никто не справился';
+        return `<div class="g-mod g-mini">
+          <div class="g-mod-ico">${esc(v.icon)}</div>
+          <p class="g-mod-k">Мини-игра · победителю +${fmt(v.bonus)}</p>
+          <h2>${esc(v.name)}</h2>
+          <p class="g-mod-d">${sub}</p>
+          ${timerHTML(v.timer)}
+          ${rows ? `<ol class="g-mini-list">${rows}</ol>` : ''}
+        </div>`;
+      }
       case 'finw':
         return `<p>Финал · тема</p><h2>${esc(v.cat || 'Финальный вопрос')}</h2><p>${esc(v.sub || '')}</p>${v.chips ? `<div class="g-chips">${v.chips.map((c) => `<span class="g-chip ${c.ok ? 'ok' : ''}">${c.ok ? '✓' : '…'} ${esc(c.name)}</span>`).join('')}</div>` : ''}`;
       case 'end': {
@@ -255,7 +280,7 @@ export function createScreen(parent, opts) {
     if (p.kind === 'host') {
       panel._k = null;
       const ans = p.answer == null ? '' : `<div class="p-wrap ${p.hidden ? 'p-hidden' : ''}"><div class="p-lbl">Правильный ответ</div><div class="p-ans">${nl2br(p.answer || '—')}</div>${p.hidden ? '<div class="p-hidden-note">Скрыт: экран видят игроки</div><button type="button" class="btn ghost" data-peek>👁 Подсмотреть (зажми)</button>' : ''}</div>`;
-      setHTML(panel, `${p.lbl ? `<div class="p-lbl">${esc(p.lbl)}</div>` : ''}${p.text ? `<div class="p-text">${fill(p.text, p.team)}</div>` : ''}${ans}${p.status ? `<div class="p-status">${fill(p.status, p.statusTeam)}</div>` : ''}${controlsHTML(p.controls || [])}`);
+      setHTML(panel, `${p.lbl ? `<div class="p-lbl">${esc(p.lbl)}</div>` : ''}${p.text ? `<div class="p-text">${fill(p.text, p.team, p.team2)}</div>` : ''}${ans}${p.status ? `<div class="p-status">${fill(p.status, p.statusTeam)}</div>` : ''}${controlsHTML(p.controls || [])}`);
       return;
     }
     if (p.kind === 'buzz') {
@@ -292,6 +317,12 @@ export function createScreen(parent, opts) {
         panel.innerHTML = `<form class="p-form" data-form="${esc(f.key)}" data-type="${f.type}"><div class="p-lbl">${esc(f.title)}</div><div class="p-text p-sub"></div>${field}${quick}<button class="btn primary">${esc(f.label)}</button></form>`;
       }
       panel.querySelector('.p-sub').textContent = f.sub || '';
+      return;
+    }
+    if (p.kind === 'choice') {
+      panel._k = null;
+      setHTML(panel, `${p.lbl ? `<div class="p-lbl">${esc(p.lbl)}</div>` : ''}<div class="p-text">${fill(p.text, p.team)}</div>
+        <div class="p-choice">${p.options.map((o) => `<button type="button" class="btn" data-choice="${esc(o.id)}"><span class="g-dot" style="background:${esc(o.color)}"></span><span class="n">${esc(o.name)}</span><b>${fmt(o.score)}</b></button>`).join('')}</div>`);
       return;
     }
     panel._k = null;

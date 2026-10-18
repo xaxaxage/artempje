@@ -1,9 +1,9 @@
 // Test bench: the host screen and a few fake players side by side, so one person can try a whole game.
 // The host frame creates a room and reports its code; each player frame then joins it with its own id.
-import * as db from './db.js?v=1791919655137';
-import { esc, store } from './util.js?v=1791919655137';
-import { stats } from './board.js?v=1791919655137';
-import { exampleBoard } from './examples.js?v=1791919655137';
+import * as db from './db.js?v=1792343936758';
+import { esc, store } from './util.js?v=1792343936758';
+import { stats } from './board.js?v=1792343936758';
+import { exampleBoard } from './examples.js?v=1792343936758';
 
 const NAMES = ['Вася', 'Маша', 'Петя', 'Оля'];
 const $ = (s) => document.querySelector(s);
@@ -54,6 +54,7 @@ window.addEventListener('message', (e) => {
 });
 
 $('#tb-start').addEventListener('click', start);
+$('#tb-mini').addEventListener('click', () => hostFrame.contentWindow?.postMessage({ plyukh: 'mini' }, location.origin));
 $('#tb-scare').addEventListener('click', () => hostFrame.contentWindow?.postMessage({ plyukh: 'scare' }, location.origin));
 $('#tb-board').addEventListener('change', start);
 $('#tb-n').addEventListener('change', start);

@@ -276,3 +276,69 @@
   .gs .timer { width: 44px; height: 44px; }
   .gs .timer span { width: 36px; height: 36px; font-size: 15px; }
 }
+
+/* ---------- modifier and mini-game banners ---------- */
+.g-mod { display: flex; flex-direction: column; align-items: center; gap: 8px; width: min(720px, 100%); animation: g-pop .45s cubic-bezier(.2, 1.4, .4, 1) both; }
+.g-mod-ico { font-size: clamp(54px, 8vw, 104px); line-height: 1; animation: g-spin .6s cubic-bezier(.2, 1.4, .4, 1) both; }
+.g-banner .g-mod-k { text-transform: uppercase; letter-spacing: .12em; font-weight: 700; font-size: 13px; }
+.g-banner .g-mod-d { color: var(--g-ink); font-weight: 600; font-size: clamp(16px, 1.7vw, 22px); line-height: 1.35; }
+.g-banner .g-mod-who { color: var(--g-ink); font-weight: 600; }
+.g-banner .g-mod-note { color: var(--g-accent); font-weight: 700; }
+.g-banner .g-mod-wait { color: var(--g-ink); font-weight: 700; font-size: 18px; animation: g-blink 1.4s ease-in-out infinite; }
+.g-mod-ch, .g-mini-list { list-style: none; margin: 6px 0 0; padding: 0; width: min(460px, 100%); display: flex; flex-direction: column; gap: 6px; }
+.g-mod-ch li, .g-mini-list li { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; background: var(--g-panel); border: 1px solid var(--g-line); font-weight: 600; font-variant-numeric: tabular-nums; }
+.g-mod-ch .n, .g-mini-list .n { flex: 1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-mini-list .n small { color: var(--g-muted); font-weight: 500; }
+.g-mod-ch s { color: var(--g-muted); }
+.g-mod-ch .ar { color: var(--g-muted); }
+.g-mod-ch b { font-size: 20px; color: var(--g-accent); }
+.g-mod-ch b.neg { color: var(--g-bad); }
+.g-mini-list li { opacity: .6; }
+.g-mini-list li.ok { opacity: 1; }
+.g-mini-list li.win { border-color: var(--g-good); box-shadow: 0 0 0 2px var(--g-good); }
+.g-mini-list li.win b { color: var(--g-good); }
+.g-mini-list li.me { border-color: var(--g-accent); }
+@keyframes g-pop { from { transform: scale(.86); opacity: 0; } }
+@keyframes g-spin { from { transform: rotate(-140deg) scale(.3); opacity: 0; } }
+@keyframes g-blink { 50% { opacity: .5; } }
+.p-choice { display: flex; flex-direction: column; gap: 6px; }
+.gs .p-choice .btn { display: flex; align-items: center; gap: 10px; text-align: left; font-size: 16px; padding: .7em 1em; }
+.p-choice .btn .n { flex: 1; }
+@media (max-width: 760px) {
+  .g-mod { gap: 5px; }
+  .g-mod-ico { font-size: 46px; }
+  .g-banner .g-mod-d { font-size: 15px; }
+  .g-mod-ch li, .g-mini-list li { padding: 7px 10px; }
+}
+
+/* ---------- mini-game on a phone: full-screen, same look in every theme ---------- */
+.mini-ov { position: fixed; inset: 0; z-index: 85; display: flex; align-items: center; justify-content: center; padding: 20px; background: #23252d; color: #f4f4f6; font-family: Inter, system-ui, sans-serif; text-align: center; touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; overflow: auto; }
+.mini-ov[hidden] { display: none; }
+.mini-in { width: min(440px, 100%); display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.mini-ico { font-size: 60px; line-height: 1; }
+.mini-name { font-size: 13px; text-transform: uppercase; letter-spacing: .1em; opacity: .75; font-weight: 700; }
+.mini-rule { font-size: 19px; font-weight: 600; line-height: 1.35; }
+.mini-big { font-size: 42px; font-weight: 800; line-height: 1.1; }
+.mini-big.huge { font-size: 86px; }
+.mini-cd { font-size: 96px; font-variant-numeric: tabular-nums; }
+.mini-sub { font-size: 15px; opacity: .8; }
+.mini-res { font-size: 28px; font-weight: 800; }
+.mini-q { font-size: 54px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mini-word { font-size: 46px; letter-spacing: .02em; }
+.mini-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; width: 100%; }
+.mini-opts button { min-height: 78px; border-radius: 16px; border: none; background: #fff; color: #23252d; font: 800 26px Inter, system-ui, sans-serif; cursor: pointer; touch-action: manipulation; }
+.m-light .mini-opts button { font-size: 19px; background: #23252d; color: #fff; }
+.mini-tap { width: min(250px, 66vw); aspect-ratio: 1; border-radius: 50%; border: none; background: #df6e5c; color: #fff; font: 800 34px Inter, system-ui, sans-serif; box-shadow: 0 10px 0 #a94c3e; cursor: pointer; touch-action: manipulation; }
+.mini-tap:active { transform: translateY(6px); box-shadow: 0 4px 0 #a94c3e; }
+.mini-clock { font-size: 72px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.mini-ov.m-red { background: #b8443a; }
+.mini-ov.m-green { background: #23a35a; }
+.mini-ov.m-ok { background: #2c7a5c; }
+.mini-ov.m-bad { background: #7d3832; }
+.mini-ov.m-light { background: #f3f1ec; color: #23252d; }
+.mini-list { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.mini-list li { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 12px; background: rgba(255, 255, 255, .1); font-weight: 600; }
+.mini-list li.me { box-shadow: inset 0 0 0 2px rgba(255, 255, 255, .7); }
+.mini-list li i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+.mini-list li span { flex: 1; text-align: left; }
+.mini-close { opacity: .6; }

@@ -1,9 +1,11 @@
 // One played game, as it happened: who played, every question in order, and a "time machine"
 // that steps through the game showing the board, the question and the score at that moment.
-import * as db from './db.js?v=1791919655137';
-import { esc, nl2br, fmt, signed, plural, confirmDlg } from './util.js?v=1791919655137';
-import { getGame, removeGame } from './history.js?v=1791919655137';
-import { srcOf } from './media.js?v=1791919655137';
+import * as db from './db.js?v=1792343936758';
+import { esc, nl2br, fmt, signed, plural, confirmDlg } from './util.js?v=1792343936758';
+import { getGame, removeGame } from './history.js?v=1792343936758';
+import { srcOf } from './media.js?v=1792343936758';
+import { MODS } from './mods.js?v=1792343936758';
+import { GAMES } from './minigames.js?v=1792343936758';
 
 const MODE_NAMES = { simple: 'простой режим', buzzer: 'с кнопками' };
 // Team colours are validated for the light surface; these two need a deeper step on the dark one.
@@ -49,6 +51,15 @@ export function buildSteps(h) {
         if (cur) { cur.outcomes.push({ team: e.team, by: e.by, delta: e.delta, ok: e.k === 'right' }); cur.scores = { ...scores }; }
         break;
       case 'none': if (cur) cur.nobody = true; break;
+      case 'mod':
+        scores = { ...e.scores };
+        if (cur) { cur.mod = { kind: e.mod, team: e.team, target: e.target }; cur.scores = { ...scores }; }
+        break;
+      case 'mini':
+        close();
+        scores = { ...e.scores };
+        steps.push({ kind: 'mini', t: e.t, round, used, game: e.game, team: e.team, by: e.by, delta: e.delta, scores: { ...scores } });
+        break;
       case 'adj':
         scores = { ...e.scores };
         if (cur) { cur.outcomes.push({ team: e.team, delta: e.delta, manual: true }); cur.scores = { ...scores }; }
@@ -84,7 +95,7 @@ export async function renderHistory(root, id) {
   const mins = h.startedAt ? Math.max(1, Math.round((h.at - h.startedAt) / 60000)) : 0;
   const steps = h.v === 2 ? buildSteps(h) : [];
   const clueSteps = steps.filter((s) => s.kind === 'clue');
-  const meta = [day(h.at), mins ? `${mins} мин` : '', MODE_NAMES[h.mode] || '', clueSteps.length ? `${clueSteps.length} ${plural(clueSteps.length, 'вопрос', 'вопроса', 'вопросов')}` : ''].filter(Boolean).join(' · ');
+  const meta = [day(h.at), mins ? `${mins} мин` : '', MODE_NAMES[h.mode] || '', h.answer === 'turns' ? 'по очереди' : '', clueSteps.length ? `${clueSteps.length} ${plural(clueSteps.length, 'вопрос', 'вопроса', 'вопросов')}` : ''].filter(Boolean).join(' · ');
 
   root.innerHTML = `
     <div class="page hv">
@@ -164,7 +175,7 @@ export async function renderHistory(root, id) {
     let cells = r.cats.map((c) => `<div class="hv-cat">${esc(c.name)}</div>`).join('');
     r.values.forEach((v, qi) => r.cats.forEach((cat, ci) => {
       const key = `${s.round}:${ci}:${qi}`;
-      const has = (cat.clues[qi]?.q || '').trim() || cat.clues[qi]?.m;
+      const has = (cat.clues[qi]?.q || '').trim() || cat.clues[qi]?.m || cat.clues[qi]?.mod;
       const cls = !has ? 'empty' : key === s.key ? 'now' : s.used[key] ? 'used' : '';
       cells += `<div class="hv-cell ${cls}">${has && !s.used[key] ? fmt(v) : ''}</div>`;
     }));
@@ -182,6 +193,11 @@ export async function renderHistory(root, id) {
         return `<h3>Игра началась</h3><p class="muted">${esc(clock(s.t))}</p>
           <ul class="hv-out">${h.teams.map((t) => `<li>${dot(t.id)}<span>${esc(t.name)}${t.members?.length && h.teamMode !== 'solo' ? ` — ${esc(t.members.join(', '))}` : ''}</span></li>`).join('')}</ul>
           ${s.picker ? `<p>Первыми выбирали ${dot(s.picker)}${esc(tname(s.picker))}</p>` : ''}`;
+      }
+      case 'mini': {
+        const g = GAMES[s.game] || { icon: '🎮', name: 'Мини-игра' };
+        return `<h3>${g.icon} Мини-игра «${esc(g.name)}»</h3><p class="muted">${esc(clock(s.t))}</p>
+          <ul class="hv-out">${s.team ? `<li>${dot(s.team)}<span>Победа: ${esc(s.by)} — ${esc(tname(s.team))}</span><b>${signed(s.delta)}</b></li>` : '<li class="muted"><span>Никто не справился</span></li>'}</ul>`;
       }
       case 'round': return `<h3>${esc(snapRound(s.round)?.name || 'Новый раунд')}</h3><p class="muted">Начался новый раунд — стоимость вопросов выше.</p>`;
       case 'adj': return `<h3>Ведущий поправил очки</h3><ul class="hv-out">${outcomeHTML({ team: s.team, delta: s.delta, manual: true })}</ul>`;
@@ -202,13 +218,16 @@ export async function renderHistory(root, id) {
       case 'clue': {
         const cl = clueOf(s) || {};
         const head = s.dd ? `Вопрос-ставка${s.wager != null ? ` · ставка ${fmt(s.wager)}` : ''}` : fmt(s.value);
+        const M = s.mod && MODS[s.mod.kind];
+        const mod = M ? `<p class="hv-mod">${M.icon} Модернизатор «${esc(M.name)}» — открыли ${dot(s.mod.team)}${esc(tname(s.mod.team))}${s.mod.target ? `, выбрали ${dot(s.mod.target)}${esc(tname(s.mod.target))}` : ''}</p>` : '';
         const outs = s.outcomes.length ? s.outcomes.map(outcomeHTML).join('') : '';
-        const nobody = !s.outcomes.some((o) => o.ok) && (s.nobody || s.outcomes.length) ? '<li class="muted"><span>Правильно никто не ответил</span></li>' : '';
+        const nobody = !s.outcomes.some((o) => o.ok) && (s.nobody || s.outcomes.some((o) => !o.manual)) ? '<li class="muted"><span>Правильно никто не ответил</span></li>' : '';
         return `<h3>${esc(catOf(s))} <span class="hv-val">${esc(head)}</span></h3>
           <p class="muted small">${esc(clock(s.t))}${s.picker ? ` · выбирали ${esc(tname(s.picker))}` : ''}</p>
+          ${mod}
           ${cl.q ? `<p class="hv-q">${nl2br(cl.q)}</p>` : ''}
           <div class="hv-media" data-m="${esc(JSON.stringify(cl.m || null))}"></div>
-          <p class="hv-a">Ответ: <b>${nl2br(cl.a || '—')}</b></p>
+          ${cl.q || cl.m ? `<p class="hv-a">Ответ: <b>${nl2br(cl.a || '—')}</b></p>` : ''}
           <ul class="hv-out">${outs}${nobody}</ul>`;
       }
     }
@@ -250,7 +269,7 @@ export async function renderHistory(root, id) {
 
   function stepLabel(s, i) {
     if (s.kind === 'clue') return `Вопрос ${clueSteps.indexOf(s) + 1} из ${clueSteps.length}: ${catOf(s)} · ${s.dd ? 'ставка' : fmt(s.value)}`;
-    return { start: 'Начало игры', round: 'Новый раунд', adj: 'Поправка очков', final: 'Финал', fjudge: `Финал: ${tname(s.team)}`, end: 'Конец игры' }[s.kind] || `Шаг ${i + 1}`;
+    return { start: 'Начало игры', round: 'Новый раунд', adj: 'Поправка очков', mini: 'Мини-игра', final: 'Финал', fjudge: `Финал: ${tname(s.team)}`, end: 'Конец игры' }[s.kind] || `Шаг ${i + 1}`;
   }
 
   function show(i) {
@@ -308,12 +327,13 @@ export async function renderHistory(root, id) {
       const right = s.outcomes.find((o) => o.ok);
       const wrong = s.outcomes.filter((o) => o.ok === false);
       return `<li data-i="${i}">
-        <span class="hv-li-head">${esc(catOf(s))} · ${s.dd ? `ставка ${fmt(s.wager || 0)}` : fmt(s.value)}</span>
-        <span class="hv-li-q">${esc((cl.q || (cl.m ? '(картинка / звук)' : '')).slice(0, 140))}</span>
+        <span class="hv-li-head">${s.mod && MODS[s.mod.kind] ? `${MODS[s.mod.kind].icon} ` : ''}${esc(catOf(s))} · ${s.dd ? `ставка ${fmt(s.wager || 0)}` : fmt(s.value)}</span>
+        <span class="hv-li-q">${esc((cl.q || (cl.m ? '(картинка / звук)' : s.mod ? `модернизатор «${MODS[s.mod.kind]?.name || ''}»` : '')).slice(0, 140))}</span>
         <span class="hv-li-a">→ ${esc(cl.a || '—')}</span>
         <span class="hv-li-res">${right ? `${dot(right.team)}${esc(tname(right.team))} ${signed(right.delta)}` : 'никто'}${wrong.length ? ` · мимо: ${wrong.map((o) => esc(tname(o.team))).join(', ')}` : ''}</span>
       </li>`;
     }
+    if (s.kind === 'mini') return `<li data-i="${i}"><span class="hv-li-head">${GAMES[s.game]?.icon || '🎮'} Мини-игра «${esc(GAMES[s.game]?.name || '')}»</span><span class="hv-li-res">${s.team ? `${dot(s.team)}${esc(s.by)} — ${esc(tname(s.team))} ${signed(s.delta)}` : 'никто'}</span></li>`;
     if (s.kind === 'fjudge') return `<li data-i="${i}"><span class="hv-li-head">Финал · ${esc(tname(s.team))}</span><span class="hv-li-q">${s.answer == null ? 'ответ вслух' : `«${esc(s.answer || '—')}»`}</span><span class="hv-li-res">${s.ok ? '✓' : '✗'} ${signed(s.ok ? s.wager || 0 : -(s.wager || 0))}</span></li>`;
     if (['round', 'final', 'end', 'start'].includes(s.kind)) return `<li data-i="${i}" class="hv-li-sep"><span>${esc(stepLabel(s, i))}</span></li>`;
     return '';

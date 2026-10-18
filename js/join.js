@@ -1,12 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1791919655137';
-import { VERSION } from './version.js?v=1791919655137';
-import { Client, LocalLink } from './net.js?v=1791919655137';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1791919655137';
-import { MediaReceiver } from './mediasync.js?v=1791919655137';
-import { createScreen, prefs } from './gameui.js?v=1791919655137';
-import * as screamer from './screamer.js?v=1791919655137';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1792343936758';
+import { VERSION } from './version.js?v=1792343936758';
+import { Client, LocalLink } from './net.js?v=1792343936758';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792343936758';
+import { MediaReceiver } from './mediasync.js?v=1792343936758';
+import { createScreen, prefs } from './gameui.js?v=1792343936758';
+import * as screamer from './screamer.js?v=1792343936758';
+import { MiniPlayer } from './minigames.js?v=1792343936758';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -38,6 +39,9 @@ const receiver = new MediaReceiver(() => {
   mediaRaf = requestAnimationFrame(() => { mediaRaf = 0; if (view) renderPlayer(); });
 });
 
+// Mini-games run in an overlay over the game screen (js/minigames.js).
+const mini = new MiniPlayer((m) => client?.send(m));
+
 const logo = `<a class="logo" href="../">${LOGO_SVG}<span>artempje</span></a>`;
 
 function pidFor(c) {
@@ -54,6 +58,7 @@ const homeLink = '<a class="back-link" href="../">← На главную</a>';
 // Leaves the room: back to the code screen, or to the home page.
 function leave(home = false) {
   screamer.stop();
+  mini.close();
   client?.stop();
   client = null;
   view = null;
@@ -137,6 +142,7 @@ function nameScreen() {
 
 function messageScreen(title, text, retry = false) {
   mounted = false;
+  mini.close();
   screen?.destroy();
   screen = null;
   app.innerHTML = `<div class="ph-center">${homeLink}${logo}<h1>${esc(title)}</h1><p class="muted">${esc(text)}</p>
@@ -185,6 +191,7 @@ function onMsg(d) {
     if (t) d.view.timer = { deadline: Date.now() + t.remain, total: t.total };
   }
   render();
+  if (d.t === 'state') mini.update(d.me?.mini || null);
 }
 
 // Host and phone must run the same release, or features like clue media silently go missing.
@@ -262,7 +269,16 @@ function playerPanel(v) {
       ? { kind: 'text', lbl: 'Команда', text: 'Ты в команде {team}. Можно перейти в другую, пока игра не началась.', team: me.team }
       : { kind: 'text', lbl: 'Скоро начнём', text: 'Ведущий собирает игроков.' };
   }
+  if (v.phase === 'mini') return { kind: 'text', lbl: 'Мини-игра', text: 'Играем прямо на телефоне!' };
   if (v.phase === 'clue' && c) {
+    if (c.mod) {
+      const m = c.mod;
+      const lbl = `${m.icon} Модернизатор «${m.name}»`;
+      if (m.ask) return { kind: 'choice', lbl, text: m.ask.text, options: m.ask.options };
+      if (!m.done) return { kind: 'text', lbl, text: '{team} выбирают…', team: m.team };
+      return { kind: 'text', lbl, text: m.mine ? 'Он достался вашей команде!' : 'Достался команде {team}', team: m.team };
+    }
+    if (c.single) return singlePanel(c);
     if (c.stage === 'ddIntro') {
       if (c.wagerReq) return { kind: 'form', form: { key: `dd:${v.view?.key}`, type: 'wager', title: 'Ставка вашей команды', min: c.wagerReq.min, max: c.wagerReq.max, value: '', label: 'Поставить', sub: `От ${fmt(c.wagerReq.min)} до ${fmt(c.wagerReq.max)}` } };
       return { kind: 'text', lbl: 'Вопрос-ставка', text: '{team} делают ставку.', team: c.ddTeam };
@@ -271,6 +287,7 @@ function playerPanel(v) {
     if (v.mode !== 'buzzer') return { kind: 'text', text: 'Отвечайте вслух — ведущий отметит, кто прав.' };
     return { kind: 'buzz', buzz: buzzState(v) };
   }
+  if (v.phase === 'board' && v.answer === 'turns') return v.view?.hint ? { kind: 'text', lbl: me.turn ? 'Ваш ход' : 'По очереди', text: v.view.hint } : null;
   if (v.phase === 'board') return v.mode === 'buzzer' ? { kind: 'buzz', buzz: buzzState(v) } : null;
   if (v.phase === 'final' && f) {
     if (f.stage === 'wager') return { kind: 'form', form: { key: 'fw', type: 'wager', title: 'Ставка вашей команды', min: 0, max: f.max, value: f.wager ?? (f.max ? '' : 0), label: 'Поставить', sub: f.wager != null ? `Принято: ${fmt(f.wager)}. Можно изменить, пока не показали вопрос` : f.max ? `От 0 до ${fmt(f.max)}` : 'У команды нет очков — ставка 0, но ответить можно' } };
@@ -284,6 +301,19 @@ function playerPanel(v) {
     return { kind: 'text', lbl: v.phase === 'end' ? 'Итог' : 'Раунд завершён', text: place === 1 ? 'Ваша команда первая! 🏆' : place ? `Ваша команда на ${place} месте` : '' };
   }
   return null;
+}
+
+// One team answers alone: "по очереди", or "Кот в мешке" gave them the question.
+function singlePanel(c) {
+  const lbl = c.only ? 'Кот в мешке' : 'По очереди';
+  if (c.stage === 'answer') {
+    const r = c.result;
+    if (!r) return { kind: 'text', lbl, text: 'Никто не ответил' };
+    const how = r.ok ? `верно, ${signed(r.delta)}` : r.delta ? `неверно, ${signed(r.delta)}` : 'мимо, без минуса';
+    return { kind: 'text', lbl, text: r.mine ? `Ваша команда — ${how}` : `{team} — ${how}`, team: r.team };
+  }
+  if (c.buzzedMine) return { kind: 'text', lbl: c.only ? lbl : 'Ваш ход', text: 'Отвечайте вслух — ведущий отметит, верно или нет.' };
+  return { kind: 'text', lbl, text: 'Отвечают {team}', team: c.buzzedTeam };
 }
 
 // ---------- player: the screen ----------
@@ -337,6 +367,7 @@ function onScreen(type, d = {}) {
     case 'buzz': return press();
     case 'pick': return client?.send({ t: 'pick', c: d.c, q: d.q });
     case 'join': return client?.send({ t: 'team', team: d.team });
+    case 'choice': return client?.send({ t: 'modTarget', team: d.id });
     case 'prefs': return render();
     case 'link': return confirmLeave(d.name === 'home');
     case 'form': {
@@ -415,13 +446,13 @@ function renderRemote() {
   if (v.phase === 'lobby') info = `<div class="rm-card"><b>${esc(v.title)}</b><p class="muted">Игроки собираются. Начни игру на большом экране.</p></div>`;
   else if (v.phase === 'board' && v.round) {
     const r = v.round;
-    info = `<div class="rm-card"><b>${esc(r.name)}</b><span class="muted small"> · ★ — вопрос-ставка</span>
+    info = `<div class="rm-card"><b>${esc(r.name)}</b><span class="muted small"> · ★ — вопрос-ставка · ⚡ — модернизатор</span>
       <div class="rm-grid" style="--cols:${r.cats.length}">
         ${r.cats.map((c) => `<div class="rm-cat">${esc(c)}</div>`).join('')}
         ${r.values.map((val, qi) => r.cats.map((_, ci) => {
           const g = r.grid[ci][qi];
           const off = g.u || !g.f;
-          return `<button class="rm-cell ${off ? 'used' : ''}" data-act="pick" data-args='${JSON.stringify({ c: ci, q: qi })}' ${off ? 'disabled' : ''}>${off ? '' : fmt(val) + (g.d ? '★' : '')}</button>`;
+          return `<button class="rm-cell ${off ? 'used' : ''}" data-act="pick" data-args='${JSON.stringify({ c: ci, q: qi })}' ${off ? 'disabled' : ''}>${off ? '' : fmt(val) + (g.d ? '★' : '') + (g.m ? '⚡' : '')}</button>`;
         }).join('')).join('')}
       </div></div>`;
   } else if (v.clue) {
@@ -430,6 +461,8 @@ function renderRemote() {
       <div class="rm-q">${esc(c.q) || '<i class="muted">(медиа-вопрос)</i>'}</div>
       <div class="rm-a"><span class="muted small">Ответ</span><b>${esc(c.a || '—')}</b></div>
       <div class="rm-status">${esc(c.status)}</div></div>`;
+  } else if (v.mini) {
+    info = `<div class="rm-card"><b>${esc(v.mini.name)}</b><div class="rm-status">${esc(v.mini.status)}</div></div>`;
   } else if (v.fin) {
     const f = v.fin;
     info = `<div class="rm-card"><div class="muted small">Финал · ${esc(f.cat)}</div><div class="rm-q">${esc(f.q)}</div>

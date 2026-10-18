@@ -1,4 +1,5 @@
-import { uid } from './util.js?v=1791919655137';
+import { uid } from './util.js?v=1792343936758';
+import { isMod } from './mods.js?v=1792343936758';
 
 export const ROUND1_VALUES = [200, 400, 600, 800, 1000];
 
@@ -41,8 +42,10 @@ export function mediaRefs(board) {
   return out;
 }
 
-export const filled = (c) => !!(c && ((c.q || '').trim() || c.media));
-export const finalReady = (b) => !!(b.final && b.final.enabled && filled(b.final));
+// A cell has a question if it has text or a picture/sound; a modifier (js/mods.js) alone also makes it playable.
+export const hasQ = (c) => !!(c && ((c.q || '').trim() || c.media));
+export const filled = (c) => hasQ(c) || !!c?.mod;
+export const finalReady = (b) => !!(b.final && b.final.enabled && hasQ(b.final));
 export const roundPlayable = (r) => r.categories.some((c) => c.clues.some(filled));
 
 export function stats(board) {
@@ -72,6 +75,7 @@ export function normalize(b) {
       while (c.clues.length < r.values.length) c.clues.push(newClue());
       c.clues.length = r.values.length;
       c.clues = c.clues.map((x) => ({ ...newClue(), ...x, q: String(x?.q || ''), a: String(x?.a || '') }));
+      for (const x of c.clues) if (!isMod(x.mod)) delete x.mod;
     }
   }
   b.final = { enabled: true, category: '', ...newClue(), ...(b.final || {}) };

@@ -1,22 +1,31 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1791919655137';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1791919655137';
-import { filled, finalReady, roundPlayable } from './board.js?v=1791919655137';
-import { mediaEl, kindOf } from './media.js?v=1791919655137';
-import { play as sfx, sound, unlock } from './sound.js?v=1791919655137';
-import { Host, errText, hostChannelName } from './net.js?v=1791919655137';
-import { setHTML } from './controls.js?v=1791919655137';
-import { saveGame } from './history.js?v=1791919655137';
-import { MediaSender, describe } from './mediasync.js?v=1791919655137';
-import { VERSION } from './version.js?v=1791919655137';
-import { createScreen } from './gameui.js?v=1791919655137';
-import * as screamer from './screamer.js?v=1791919655137';
+import * as db from './db.js?v=1792343936758';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792343936758';
+import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792343936758';
+import { mediaEl, kindOf } from './media.js?v=1792343936758';
+import { play as sfx, sound, unlock } from './sound.js?v=1792343936758';
+import { Host, errText, hostChannelName } from './net.js?v=1792343936758';
+import { setHTML } from './controls.js?v=1792343936758';
+import { saveGame } from './history.js?v=1792343936758';
+import { MediaSender, describe } from './mediasync.js?v=1792343936758';
+import { VERSION } from './version.js?v=1792343936758';
+import { createScreen } from './gameui.js?v=1792343936758';
+import * as screamer from './screamer.js?v=1792343936758';
+import { MODS, resolveMod } from './mods.js?v=1792343936758';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792343936758';
 
 const SETTINGS_KEY = 'plyukh-settings';
-const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true };
+const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 'off', mini: 'rare' };
 const BUZZ_WINDOW_MS = 220;
+const MODS_PER_ROUND = { few: 1, many: 3 };
+const MINI_CHANCE = { rare: 0.12, often: 0.3 }; // after each question, once enough questions passed
+const MINI_GAP = { rare: 4, often: 2 };
 const TEAM_COLORS = ['#df6e5c', '#5b8def', '#4fae8f', '#e0a43a', '#a77fd6', '#7d9a3a', '#d6588f', '#2a9fb5'];
+function shuffle(a) {
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
 const TEAM_NAMES = ['Красные', 'Синие', 'Зелёные', 'Жёлтые', 'Фиолетовые', 'Голубые', 'Розовые', 'Оливковые'];
 
 export async function startPlay(root, boardId) {
@@ -52,7 +61,7 @@ export async function startPlay(root, boardId) {
   const members = (tid) => S.players.filter((p) => p.teamId === tid);
   const keyOf = (r, c, q) => `${r}:${c}:${q}`;
   const clueAt = (c) => R().categories[c.c].clues[c.q];
-  const worth = () => (S.clue.dd ? S.clue.wager || 0 : S.clue.value);
+  const worth = () => (S.clue.dd ? S.clue.wager || 0 : S.clue.value * (S.clue.mult || 1));
   const firstRound = () => board.rounds.findIndex(roundPlayable);
   const standings = () => [...S.teams].sort((a, b) => b.score - a.score);
   const saveSettings = () => store.set(SETTINGS_KEY, settings);
@@ -61,6 +70,10 @@ export async function startPlay(root, boardId) {
   const remoteUrl = () => new URL(`join/?r=${S.code}&k=${S.hostKey}`, pageUrl()).href;
   const usesPhones = () => S.mode === 'buzzer';
   const solo = () => S.teamMode === 'solo';
+  // "По очереди": teams answer in turn, no buttons; a right answer earns picking the next team's question.
+  const turns = () => settings.answer === 'turns';
+  // What a mini-game win is worth: the cheapest question of the round.
+  const bonus = () => { const v = R().values.filter((x) => x > 0); return v.length ? Math.min(...v) : 100; };
   const step = () => Math.min(...R().values.filter((v) => v > 0), 100) || 100;
   // A team can buzz if someone of it is online, or if it plays without phones (the host buzzes for it).
   const canPlay = (t) => { const m = members(t.id).filter((p) => p.phone); return !m.length || m.some((p) => p.online); };
@@ -69,7 +82,7 @@ export async function startPlay(root, boardId) {
   function freshState(mode = 'buzzer') {
     return {
       v: 2, phase: 'setup', mode, teamMode: 'teams', teams: [], players: [], kicked: [], round: 0, used: {}, dds: {},
-      picker: null, clue: null, fin: null, code: null, hostKey: uid().slice(0, 10), openSeq: 0,
+      picker: null, turn: null, mods: {}, mini: null, clue: null, fin: null, code: null, hostKey: uid().slice(0, 10), openSeq: 0,
     };
   }
 
@@ -124,6 +137,10 @@ export async function startPlay(root, boardId) {
     const top = Math.max(...R().values);
     return { min: 0, max: Math.max(t?.score || 0, top) };
   }
+  // In "по очереди" a team has to answer, so a miss costs nothing unless the host wants it to.
+  function penalty() {
+    return turns() && !settings.turnMinus && !S.clue.dd ? 0 : worth();
+  }
   function eligible() {
     const c = S.clue;
     return S.teams.filter((t) => !c.tried.includes(t.id) && canPlay(t));
@@ -142,7 +159,7 @@ export async function startPlay(root, boardId) {
     const want = S.round === firstRound() ? 1 : 2;
     const cands = [];
     r.categories.forEach((cat, ci) => cat.clues.forEach((cl, qi) => {
-      if (!filled(cl)) return;
+      if (!hasQ(cl) || cl.mod) return;
       const w = qi === 0 && r.values.length > 2 ? 0.15 : 1 + qi * 0.6;
       cands.push({ ci, qi, w });
     }));
@@ -156,6 +173,18 @@ export async function startPlay(root, boardId) {
       usedCats.add(pick.ci);
       cands.splice(cands.indexOf(pick), 1);
     }
+  }
+
+  // A few random modifier cells per round, on top of those the author put on the board.
+  function placeMods() {
+    S.mods = {};
+    const n = MODS_PER_ROUND[settings.mods] || 0;
+    const cands = [];
+    R().categories.forEach((cat, ci) => cat.clues.forEach((cl, qi) => {
+      const key = keyOf(S.round, ci, qi);
+      if (hasQ(cl) && !cl.mod && !S.dds[key] && !S.used[key]) cands.push(key);
+    }));
+    for (const key of shuffle(cands).slice(0, n)) S.mods[key] = 'random';
   }
 
   function clearBuzz() {
@@ -176,13 +205,41 @@ export async function startPlay(root, boardId) {
     clearBuzz();
     c.stage = 'buzzed';
     c.buzzed = { team: tid, pid };
-    c.ansDeadline = settings.timer ? Date.now() + Math.max(5, settings.timer) * 1000 : 0;
+    c.ansTotal = Math.max(5, settings.timer) * 1000;
+    c.ansDeadline = settings.timer ? Date.now() + c.ansTotal : 0;
     c.ansBeeped = false;
     log({ k: 'buzz', team: tid, by: player(pid)?.name || '' });
     sfx('buzz');
   }
+  // The question itself, right away or after the modifier. One team answers alone in the
+  // "по очереди" mode and after "Кот в мешке"; otherwise everyone races for the button.
+  function startQuestion() {
+    const c = S.clue;
+    const single = c.only || (turns() ? S.turn : null);
+    if (!team(single)) { c.stage = 'reading'; return; }
+    c.single = true;
+    c.stage = 'buzzed';
+    c.buzzed = { team: single, pid: null };
+    c.ansTotal = (Math.max(5, settings.timer) + 5) * 1000; // they also need to hear the question
+    c.ansDeadline = settings.timer ? Date.now() + c.ansTotal : 0;
+    c.ansBeeped = false;
+  }
+  function nextTurn(tid) {
+    const n = S.teams.length;
+    const i = S.teams.findIndex((t) => t.id === tid);
+    for (let k = 1; k <= n; k++) {
+      const t = S.teams[(i + k + n) % n];
+      if (canPlay(t) && (members(t.id).length || !usesPhones())) return t.id;
+    }
+    return S.teams[(i + 1 + n) % n]?.id || null;
+  }
   function finishClue() {
-    S.used[S.clue.key] = true;
+    const c = S.clue;
+    S.used[c.key] = true;
+    if (turns()) {
+      S.turn = nextTurn(S.turn);
+      S.picker = c.result?.ok ? c.result.team : S.turn;
+    }
     S.clue = null;
     clearBuzz();
     S.phase = roundDone() ? 'roundEnd' : 'board';
@@ -196,13 +253,72 @@ export async function startPlay(root, boardId) {
     const playing = S.teams.filter((t) => members(t.id).length || !usesPhones());
     const pool = playing.length ? playing : S.teams;
     S.picker = pool.length ? pool[Math.floor(Math.random() * pool.length)].id : null;
+    S.turn = S.picker;
+    S.mini = null;
+    cluesSinceMini = 0;
     S.gameId = uid('g');
     S.startedAt = Date.now();
     S.endedAt = 0;
     S.log = [];
     placeDDs();
+    placeMods();
     S.phase = 'board';
     log({ k: 'start', r: S.round, picker: S.picker, scores: scoreMap() });
+  }
+
+  // ---------- modifiers (js/mods.js) ----------
+  // Applies the modifier of the open cell; `target` is the team picked for swap, steal or cat.
+  function applyMod(target = null) {
+    const c = S.clue;
+    const m = c.mod;
+    const me = team(m.team);
+    const other = team(target);
+    const v = c.value;
+    const before = scoreMap();
+    let note = '';
+    switch (m.kind) {
+      case 'flip':
+        if (me) me.score = -me.score;
+        if (me && !me.score) note = 'У команды 0 — менять нечего. Повезло!';
+        break;
+      case 'swap':
+        if (me && other) [me.score, other.score] = [other.score, me.score];
+        if (me && other && me.score === other.score) note = 'Очков было поровну — ничего не изменилось';
+        break;
+      case 'steal':
+        if (me && other) { other.score -= v; me.score += v; }
+        break;
+      case 'gift': if (me) me.score += v; break;
+      case 'bomb': if (me) me.score -= v; break;
+      case 'robin': {
+        const st = standings();
+        const top = st[0];
+        const low = st[st.length - 1];
+        if (top && low && top.score > low.score) { top.score -= v; low.score += v; }
+        else note = 'У всех поровну — Робину некого грабить';
+        break;
+      }
+      case 'shuffle': {
+        const vals = S.teams.map((t) => t.score);
+        let mixed = shuffle([...vals]);
+        for (let i = 0; i < 8 && new Set(vals).size > 1 && mixed.every((x, j) => x === vals[j]); i++) mixed = shuffle([...vals]);
+        S.teams.forEach((t, i) => { t.score = mixed[i]; });
+        if (new Set(vals).size < 2) note = 'У всех поровну — перемешивать нечего';
+        break;
+      }
+      case 'double':
+        c.mult = 2;
+        break;
+      case 'cat':
+        c.only = target;
+        note = `Отвечают только ${other?.name || '…'}`;
+        break;
+    }
+    m.target = target;
+    m.done = true;
+    m.note = note;
+    m.changes = S.teams.filter((t) => t.score !== before[t.id]).map((t) => ({ id: t.id, from: before[t.id], to: t.score }));
+    log({ k: 'mod', mod: m.kind, team: m.team, target, scores: scoreMap() });
   }
 
   // ---------- game log for the history ("time machine") ----------
@@ -222,7 +338,7 @@ export async function startPlay(root, boardId) {
     return {
       rounds: board.rounds.map((r) => ({
         name: r.name, values: r.values,
-        cats: r.categories.map((c) => ({ name: c.name, clues: c.clues.map((cl) => ({ q: cl.q, a: cl.a, m: m(cl.media), am: m(cl.aMedia) })) })),
+        cats: r.categories.map((c) => ({ name: c.name, clues: c.clues.map((cl) => ({ q: cl.q, a: cl.a, m: m(cl.media), am: m(cl.aMedia), ...(cl.mod ? { mod: cl.mod } : {}) })) })),
       })),
       final: finalReady(board) ? { cat: board.final.category, q: board.final.q, a: board.final.a, m: m(board.final.media), am: m(board.final.aMedia) } : null,
     };
@@ -243,6 +359,7 @@ export async function startPlay(root, boardId) {
       board: board.title,
       boardId: board.id,
       mode: S.mode,
+      answer: settings.answer,
       teamMode: S.teamMode,
       teams: S.teams.map((t) => ({ id: t.id, name: t.name, color: t.color, score: t.score, members: members(t.id).map((p) => p.name) })),
       players: standings().map((t) => ({ name: solo() ? t.name : `${t.name}${members(t.id).length ? ` (${members(t.id).map((p) => p.name).join(', ')})` : ''}`, score: t.score })),
@@ -262,15 +379,42 @@ export async function startPlay(root, boardId) {
       const key = keyOf(S.round, c, q);
       const cl = R().categories[c]?.clues[q];
       if (!filled(cl) || S.used[key]) return;
-      const dd = !!S.dds[key] && settings.dd;
+      const modId = cl.mod || S.mods?.[key];
+      const dd = !modId && !!S.dds[key] && settings.dd;
+      // Whoever opened the cell: the choosing team, or in "по очереди" the team whose turn it is.
+      const opener = turns() ? S.turn : S.picker;
+      const who = team(opener) ? opener : S.teams[0]?.id || null;
+      if (modId) snapshot();
       S.clue = { c, q, key, value: R().values[q], dd, stage: 'reading', tried: [], buzzed: null, result: null, openId: 0, deadline: 0 };
-      if (dd) {
-        Object.assign(S.clue, { stage: 'ddIntro', ddTeam: team(S.picker) ? S.picker : S.teams[0]?.id || null, wager: null });
-        sfx('dd');
-      }
       S.phase = 'clue';
-      log({ k: 'pick', r: S.round, c, q, value: S.clue.value, dd, picker: S.picker });
+      log({ k: 'pick', r: S.round, c, q, value: S.clue.value, dd, picker: S.picker, ...(turns() ? { turn: S.turn } : {}) });
+      if (modId) {
+        S.clue.mod = { kind: resolveMod(modId, S.teams.length, hasQ(cl)), team: who, target: null, done: false, changes: [], note: '' };
+        S.clue.stage = 'mod';
+        sfx('dd');
+        if (!MODS[S.clue.mod.kind].target) applyMod();
+      } else if (dd) {
+        Object.assign(S.clue, { stage: 'ddIntro', ddTeam: who, wager: null });
+        sfx('dd');
+      } else startQuestion();
       maybeScare();
+    },
+    modTarget({ team: tid, random } = {}) {
+      const c = S.clue;
+      const m = c?.mod;
+      if (c?.stage !== 'mod' || m.done || !MODS[m.kind].target) return;
+      const others = S.teams.filter((t) => t.id !== m.team);
+      if (random) tid = others[Math.floor(Math.random() * others.length)]?.id;
+      if (!team(tid) || tid === m.team) return;
+      snapshot();
+      applyMod(tid);
+    },
+    modNext() {
+      const c = S.clue;
+      if (c?.stage !== 'mod' || !c.mod.done) return;
+      if (hasQ(clueAt(c))) return startQuestion();
+      finishClue();
+      maybeMini();
     },
     ddTeam({ team: tid }) {
       if (S.clue?.stage === 'ddIntro' && team(tid)) S.clue.ddTeam = tid;
@@ -300,7 +444,7 @@ export async function startPlay(root, boardId) {
       const v = worth();
       addScore(tid, v);
       log({ k: 'right', team: tid, by: player(c.buzzed?.pid)?.name || '', delta: v, scores: scoreMap() });
-      c.result = { team: tid, pid: c.buzzed?.pid || null, delta: v };
+      c.result = { team: tid, pid: c.buzzed?.pid || null, delta: v, ok: true };
       c.stage = 'answer';
       c.buzzed = null;
       S.picker = tid;
@@ -313,12 +457,12 @@ export async function startPlay(root, boardId) {
       tid = tid ?? (c.dd ? c.ddTeam : c.buzzed?.team);
       if (!team(tid) || c.tried.includes(tid)) return;
       snapshot();
-      const v = worth();
+      const v = penalty();
       addScore(tid, -v);
       log({ k: 'wrong', team: tid, by: player(c.buzzed?.pid)?.name || '', delta: -v, scores: scoreMap() });
       c.tried.push(tid);
       sfx('wrong');
-      if (c.dd) { c.result = { team: tid, delta: -v }; c.stage = 'answer'; return; }
+      if (c.dd || c.single) { c.result = { team: tid, delta: -v, ok: false }; c.stage = 'answer'; c.buzzed = null; return; }
       if (usesPhones()) {
         c.buzzed = null;
         if (eligible().length) startOpen();
@@ -329,7 +473,7 @@ export async function startPlay(root, boardId) {
     },
     reveal() {
       const c = S.clue;
-      if (!c || ['answer', 'ddIntro'].includes(c.stage)) return;
+      if (!c || ['answer', 'ddIntro', 'mod'].includes(c.stage)) return;
       c.stage = 'answer';
       c.buzzed = null;
       clearBuzz();
@@ -339,12 +483,14 @@ export async function startPlay(root, boardId) {
       if (S.clue?.stage === 'open' && eligible().some((t) => t.id === tid)) setBuzzed(tid);
     },
     cont() {
-      if (S.clue?.stage === 'answer') finishClue();
+      if (S.clue?.stage !== 'answer') return;
+      finishClue();
+      maybeMini();
     },
     back() {
       const c = S.clue;
       if (!c) return;
-      if (c.tried.length || c.result || c.stage === 'answer') finishClue();
+      if (c.tried.length || c.result || c.stage === 'answer' || c.mod?.done) finishClue();
       else {
         // Opened by mistake: it never happened, so drop it from the log too.
         while (S.log?.length && S.log[S.log.length - 1].k !== 'pick') S.log.pop();
@@ -385,6 +531,7 @@ export async function startPlay(root, boardId) {
       if (nx >= 0) {
         S.round = nx;
         placeDDs();
+        placeMods();
         S.phase = 'board';
         log({ k: 'round', r: nx });
       } else if (finalReady(board) && S.teams.length) {
@@ -445,6 +592,14 @@ export async function startPlay(root, boardId) {
       log({ k: 'end', scores: scoreMap() });
       sfx('win');
     },
+    mini({ kind } = {}) {
+      if (S.phase === 'board' && usesPhones()) startMini(kind);
+    },
+    miniEnd() {
+      if (S.phase !== 'mini') return;
+      S.phase = S.mini?.after || 'board';
+      S.mini = null;
+    },
     replay() {
       if (S.phase !== 'end') return;
       hist = [];
@@ -477,6 +632,10 @@ export async function startPlay(root, boardId) {
       case 'wager':
         if (p && S.clue?.stage === 'ddIntro' && S.clue.ddTeam === p.teamId) act('ddWager', { amount: d.amount });
         return;
+      case 'modTarget':
+        if (p && S.clue?.stage === 'mod' && S.clue.mod.team === p.teamId) act('modTarget', { team: d.team });
+        return;
+      case 'mini': return onMini(pid, d);
       case 'fwager': if (p) act('finWager', { team: p.teamId, amount: d.amount }); return;
       case 'fanswer': if (p) act('finAnswer', { team: p.teamId, text: d.text }); return;
       case 'act':
@@ -519,6 +678,7 @@ export async function startPlay(root, boardId) {
       else if (!team(p.teamId) && d.auto) autoTeam(p);
     }
     if (!team(S.picker) && !['setup', 'lobby'].includes(S.phase)) S.picker = p.teamId;
+    if (!team(S.turn) && !['setup', 'lobby'].includes(S.phase)) S.turn = p.teamId;
     const old = conns.get(p.id);
     if (old && old !== conn) { old._replaced = true; try { old.close(); } catch {} }
     conn._pid = p.id;
@@ -580,6 +740,7 @@ export async function startPlay(root, boardId) {
     S.teams = S.teams.filter((t) => t.id !== tid);
     for (const p of S.players) if (p.teamId === tid) p.teamId = null;
     if (S.picker === tid) S.picker = S.teams[0]?.id || null;
+    if (S.turn === tid) S.turn = S.teams[0]?.id || null;
   }
 
   // ---------- what each screen shows ----------
@@ -597,18 +758,21 @@ export async function startPlay(root, boardId) {
     const c = S.clue;
     if (S.phase === 'lobby') return { v: 'lobby', head: 'Ждём начала игры…', sub: 'Как только ведущий начнёт, здесь появится доска.' };
     if (S.phase === 'board' || (S.phase === 'clue' && !c)) {
-      const mine = !host && settings.phonePick && player(pid)?.teamId === S.picker;
+      const myTeam = player(pid)?.teamId;
+      const picking = !host && !!myTeam && myTeam === S.picker;
+      const mine = picking && settings.phonePick;
       return {
         v: 'board', cats: r.categories.map((x) => x.name), values: r.values,
         open: r.categories.map((cat, ci) => cat.clues.map((cl, qi) => filled(cl) && !S.used[keyOf(S.round, ci, qi)])),
         canPick: host || mine, mine,
-        hint: host ? '' : mine ? 'Ваша команда выбирает — нажми на клетку'
-          : player(pid)?.teamId === S.picker ? 'Ваша команда выбирает — скажите ведущему' : team(S.picker) ? `Выбирают ${team(S.picker).name}` : '',
+        hint: host ? '' : boardHint(myTeam, picking, mine),
       };
     }
+    if (S.phase === 'mini' && S.mini) return miniView(pid);
     if (S.phase === 'clue') {
       const cl = clueAt(c);
       const cat = r.categories[c.c].name;
+      if (c.stage === 'mod') return modView(c);
       if (c.stage === 'ddIntro') {
         return { v: 'dd', key: c.key, cat, team: tinfo(c.ddTeam), text: '{team} делают ставку' };
       }
@@ -617,21 +781,21 @@ export async function startPlay(root, boardId) {
       const which = ref && ref === cl.aMedia ? 'a' : 'q';
       const v = {
         v: 'clue', key: c.key, cat,
-        label: c.dd ? (c.wager != null ? `ставка ${fmt(c.wager)}` : 'вопрос-ставка') : fmt(c.value),
+        label: c.dd ? (c.wager != null ? `ставка ${fmt(c.wager)}` : 'вопрос-ставка') : c.only ? `🐱 ${fmt(worth())}` : c.mult > 1 ? `×2 · ${fmt(worth())}` : fmt(c.value),
         text: host || settings.phoneText ? cl.q : 'Вопрос — на экране ведущего',
         media: ref ? (host ? ref : describe(ref)) : null, mediaKey: ref ? `${c.key}:${which}` : '',
         autoplay: settings.mediaSync === 'all', stage: c.stage,
       };
       if (c.stage === 'open' && c.deadline) v.timer = { deadline: c.deadline, total: settings.timer * 1000 };
-      if (c.stage === 'buzzed' && c.ansDeadline) v.timer = { deadline: c.ansDeadline, total: Math.max(5, settings.timer) * 1000 };
+      if (c.stage === 'buzzed' && c.ansDeadline) v.timer = { deadline: c.ansDeadline, total: c.ansTotal || Math.max(5, settings.timer) * 1000 };
       if (c.stage === 'reading') v.status = { text: c.dd ? `Отвечают {team} · ставка ${fmt(c.wager)}` : usesPhones() ? 'Кнопки закрыты — слушайте вопрос' : 'Отвечайте вслух', team: tinfo(c.ddTeam) };
       if (c.stage === 'open') v.status = { text: `Кнопки открыты — жмите!${c.tried.length ? ` Мимо: ${c.tried.map((id) => team(id)?.name).join(', ')}` : ''}` };
-      if (c.stage === 'buzzed') v.status = { text: `Отвечают {team}${player(c.buzzed.pid) ? ` — ${player(c.buzzed.pid).name}` : ''}`, team: tinfo(c.buzzed.team) };
+      if (c.stage === 'buzzed') v.status = { text: c.only ? 'Кот в мешке: отвечают только {team}' : c.single ? 'Ход команды {team} — отвечайте!' : `Отвечают {team}${player(c.buzzed.pid) ? ` — ${player(c.buzzed.pid).name}` : ''}`, team: tinfo(c.buzzed.team) };
       if (revealed && (host || settings.phoneText)) {
         const res = c.result;
         v.answer = {
           text: cl.a,
-          result: res ? { text: `{team} ${signed(res.delta)}`, team: tinfo(res.team), cls: res.delta >= 0 ? 'good' : 'bad' } : { text: 'Никто не ответил' },
+          result: res ? { text: res.ok === false && !res.delta ? '{team} — мимо' : `{team} ${signed(res.delta)}`, team: tinfo(res.team), cls: (res.ok ?? res.delta >= 0) ? 'good' : 'bad' } : { text: 'Никто не ответил' },
         };
       }
       return v;
@@ -675,6 +839,19 @@ export async function startPlay(root, boardId) {
     return { v: 'empty' };
   }
 
+  function boardHint(myTeam, picking, mine) {
+    const how = mine ? 'нажми на клетку' : 'скажите ведущему';
+    const pk = team(S.picker)?.name;
+    const tn = team(S.turn)?.name;
+    if (turns() && tn && S.turn !== S.picker) {
+      if (picking) return `Вы выбираете вопрос для команды «${tn}» — ${how}`;
+      return myTeam === S.turn ? `Ваш ход! Вопрос вам выбирают «${pk}»` : `Ход: ${tn}. Вопрос им выбирают «${pk}»`;
+    }
+    if (picking) return `${turns() ? 'Ваш ход! ' : ''}Ваша команда выбирает — ${how}`;
+    if (!pk) return '';
+    return turns() ? `Ход: ${pk}` : `Выбирают ${pk}`;
+  }
+
   function standingsFor(pid) {
     const mine = player(pid)?.teamId;
     return standings().map((t) => ({ name: t.name, color: t.color, score: t.score, me: t.id === mine }));
@@ -687,9 +864,14 @@ export async function startPlay(root, boardId) {
     return S.teams.map((t) => {
       let badge = '';
       const cls = [];
-      if (S.phase === 'board' && S.picker === t.id) badge = 'выбирает';
+      if (S.phase === 'board') {
+        if (turns() && S.turn === t.id) badge = S.picker === t.id ? 'ход · выбирает' : 'ход';
+        else if (S.picker === t.id) badge = 'выбирает';
+      }
+      if (S.phase === 'mini' && S.mini?.win?.team === t.id) badge = `+${fmt(S.mini.bonus)}`;
       if (S.phase === 'clue' && c) {
-        if (c.buzzed?.team === t.id) { badge = player(c.buzzed.pid) ? `отвечает ${player(c.buzzed.pid).name}` : 'отвечает'; cls.push('answering'); }
+        if (c.stage === 'mod' && c.mod.team === t.id) { badge = 'модернизатор'; cls.push('answering'); }
+        else if (c.buzzed?.team === t.id) { badge = player(c.buzzed.pid) ? `отвечает ${player(c.buzzed.pid).name}` : 'отвечает'; cls.push('answering'); }
         else if (c.dd && c.ddTeam === t.id && c.stage !== 'answer') { badge = 'ставка'; cls.push('answering'); }
         else if (c.tried.includes(t.id) && c.stage !== 'answer') { badge = 'мимо'; cls.push('out'); }
       }
@@ -707,6 +889,35 @@ export async function startPlay(root, boardId) {
     });
   }
 
+  function modView(c) {
+    const m = c.mod;
+    const M = MODS[m.kind];
+    return {
+      v: 'mod', key: `${c.key}:${m.done ? 1 : 0}`, icon: M.icon, name: M.name, desc: M.desc(c.value), team: tinfo(m.team),
+      changes: m.changes.map((x) => ({ ...tinfo(x.id), from: x.from, to: x.to })),
+      note: m.note, wait: m.done ? '' : `{team} выбирают. ${M.ask}`,
+    };
+  }
+
+  function miniView(pid) {
+    const m = S.mini;
+    const g = GAMES[m.game.kind];
+    const done = m.stage === 'done';
+    const ids = done ? miniRanking(m).map((x) => x.pid) : m.parts;
+    const v = {
+      v: 'mini', key: `${m.id}:${m.stage}`, icon: g.icon, name: g.name, rule: g.rule, stage: m.stage, bonus: m.bonus,
+      rows: ids.map((id) => {
+        const p = player(id);
+        const t = team(p?.teamId);
+        const r = m.res[id];
+        return { name: p?.name || '?', color: t?.color || '#999', team: solo() ? '' : t?.name || '', res: done ? resultText(m.game.kind, r) : r ? '✓' : '…', ok: !!r, win: m.win?.pid === id, me: id === pid };
+      }),
+    };
+    if (!done) v.timer = { deadline: m.until, total: m.stage === 'intro' ? INTRO_MS : g.time };
+    if (m.win) v.win = { text: `${m.win.name} — {team} +${fmt(m.bonus)}`, team: tinfo(m.win.team) };
+    return v;
+  }
+
   // Everything a phone needs: the shared screen plus what only this player should know.
   function playerView(pid) {
     const p = player(pid);
@@ -722,14 +933,32 @@ export async function startPlay(root, boardId) {
         stage: c.stage, openId: c.openId, dd: c.dd, ddMine: c.dd && c.ddTeam === p?.teamId, ddTeam: tinfo(c.ddTeam), wager: c.wager,
         triedMine: !!t && c.tried.includes(t.id), buzzedMine: !!t && c.buzzed?.team === t.id, buzzedTeam: tinfo(c.buzzed?.team),
         buzzedName: player(c.buzzed?.pid)?.name || '', lockedMs: Math.max(0, (locks[pid] || 0) - Date.now()),
-        result: c.result ? { mine: c.result.team === t?.id, delta: c.result.delta, team: tinfo(c.result.team) } : null,
+        result: c.result ? { mine: c.result.team === t?.id, delta: c.result.delta, ok: c.result.ok, team: tinfo(c.result.team) } : null,
         wagerReq: c.stage === 'ddIntro' && t && c.ddTeam === t.id ? ddRange(t) : null,
+        single: !!c.single, only: !!c.only,
+      };
+      if (c.stage === 'mod') {
+        const m = c.mod;
+        const M = MODS[m.kind];
+        me.clue.mod = {
+          name: M.name, icon: M.icon, team: tinfo(m.team), done: m.done, mine: m.team === t?.id,
+          ask: !m.done && M.target && m.team === t?.id ? { text: M.ask, options: S.teams.filter((x) => x.id !== m.team).map((x) => ({ id: x.id, name: x.name, color: x.color, score: x.score })) } : null,
+        };
+      }
+    }
+    if (S.phase === 'mini' && S.mini) {
+      const m = S.mini;
+      me.mini = {
+        id: m.id, game: m.game, stage: m.stage, remain: Math.max(0, m.until - Date.now()), part: m.parts.includes(pid), sent: !!m.res[pid], bonus: m.bonus,
+        win: m.win ? { name: m.win.name, team: team(m.win.team)?.name || '', mine: m.win.team === p?.teamId } : null,
+        list: m.stage === 'done' ? view.rows.slice(0, 8).map((x) => ({ name: x.name, color: x.color, res: x.res, me: x.me })) : null,
       };
     }
+    if (S.phase === 'board' && t) me.turn = turns() && S.turn === t.id;
     if (S.phase === 'final' && f && t) {
       me.fin = { stage: f.stage, max: Math.max(0, t.score), wager: f.wagers[t.id] ?? null, answer: f.answers[t.id] ?? null, judged: f.judged[t.id] ?? null };
     }
-    return { t: 'state', phase: S.phase, mode: S.mode, title: board.title, round: S.phase === 'final' ? 'Финал' : R()?.name || '', view, teams: teamsFor(pid), me, teamMode: S.teamMode };
+    return { t: 'state', phase: S.phase, mode: S.mode, answer: settings.answer, title: board.title, round: S.phase === 'final' ? 'Финал' : R()?.name || '', view, teams: teamsFor(pid), me, teamMode: S.teamMode };
   }
 
   function hostView() {
@@ -740,9 +969,10 @@ export async function startPlay(root, boardId) {
       t: 'hstate', phase: S.phase, title: board.title, mode: S.mode, code: S.code,
       round: r ? {
         name: r.name, cats: r.categories.map((x) => x.name), values: r.values,
-        grid: r.categories.map((cat, ci) => cat.clues.map((x, qi) => ({ f: filled(x), u: !!S.used[keyOf(S.round, ci, qi)], d: !!S.dds[keyOf(S.round, ci, qi)] }))),
+        grid: r.categories.map((cat, ci) => cat.clues.map((x, qi) => ({ f: filled(x), u: !!S.used[keyOf(S.round, ci, qi)], d: !!S.dds[keyOf(S.round, ci, qi)], m: !!(x.mod || S.mods?.[keyOf(S.round, ci, qi)]) }))),
       } : null,
       clue: c ? { cat: r.categories[c.c].name, value: worth() || c.value, q: cl.q, a: cl.a, stage: c.stage, dd: c.dd, status: statusText() } : null,
+      mini: S.phase === 'mini' && S.mini ? { name: `${GAMES[S.mini.game.kind].icon} ${GAMES[S.mini.game.kind].name}`, status: statusText() } : null,
       fin: S.phase === 'final' ? { cat: board.final.category, q: board.final.q, a: board.final.a, stage: S.fin.stage, status: statusText() } : null,
       teams: S.teams.map((t) => ({ id: t.id, name: t.name, color: t.color, score: t.score, online: canPlay(t), members: members(t.id).map((p) => p.name), picker: S.picker === t.id })),
       controls: controls(),
@@ -771,7 +1001,7 @@ export async function startPlay(root, boardId) {
       if (filled(cl) && !S.used[keyOf(i, ci, qi)]) out.push(cl.media, cl.aMedia);
     }));
     if (['setup', 'lobby'].includes(S.phase)) add(firstRound());
-    else if (['board', 'clue', 'roundEnd'].includes(S.phase)) add(S.round);
+    else if (['board', 'clue', 'roundEnd', 'mini'].includes(S.phase)) add(S.round);
     if (S.phase === 'roundEnd') add(nextRoundIndex());
     if (finalReady(board) && S.phase !== 'end') out.push(board.final.media, board.final.aMedia);
     return out.filter(forPhones);
@@ -816,6 +1046,66 @@ export async function startPlay(root, boardId) {
     if (!phones.length) return;
     picksSinceScare = 0;
     net.send(phones[Math.floor(Math.random() * phones.length)], { t: 'scare', delay });
+  }
+
+  // ---------- mini-games (js/minigames.js) ----------
+  // Rarely, after a question, everyone with a phone plays something tiny; the best gets bonus points
+  // for their team. Needs players of at least two teams online, so it is a real contest.
+  let cluesSinceMini = 0;
+  const miniPlayers = () => S.players.filter((p) => p.phone && p.online && conns.has(p.id) && team(p.teamId));
+  function maybeMini() {
+    cluesSinceMini++;
+    const chance = MINI_CHANCE[settings.mini];
+    if (!chance || !usesPhones() || !['board', 'roundEnd'].includes(S.phase)) return;
+    if (cluesSinceMini < MINI_GAP[settings.mini] || Math.random() >= chance) return;
+    if (new Set(miniPlayers().map((p) => p.teamId)).size < 2) return;
+    startMini();
+  }
+  function startMini(kind) {
+    const ps = miniPlayers();
+    if (!ps.length) return toast('Для мини-игры нужны игроки с телефонами');
+    snapshot();
+    cluesSinceMini = 0;
+    S.mini = { id: uid('m'), game: newGame(kind), stage: 'intro', until: Date.now() + INTRO_MS, parts: ps.map((p) => p.id), res: {}, bonus: bonus(), after: S.phase, win: null };
+    S.phase = 'mini';
+    sfx('dd');
+  }
+  const miniAllIn = (m) => m.parts.every((id) => m.res[id] || !conns.has(id));
+  function onMini(pid, d) {
+    const m = S.mini;
+    if (S.phase !== 'mini' || !m || d.id !== m.id || m.stage !== 'play' || !m.parts.includes(pid) || m.res[pid]) return;
+    m.res[pid] = { val: clamp(Math.round(+d.val || 0), 0, 600000), ok: !!d.ok, why: String(d.why || '').slice(0, 10) };
+    if (miniAllIn(m)) finishMini();
+    commit();
+  }
+  function miniRanking(m) {
+    return m.parts.map((pid) => ({ pid, s: scoreOf(m.game.kind, m.res[pid]) }))
+      .sort((a, b) => (a.s == null) - (b.s == null) || (a.s ?? 0) - (b.s ?? 0));
+  }
+  function finishMini() {
+    const m = S.mini;
+    if (m.stage === 'done') return;
+    m.stage = 'done';
+    const best = miniRanking(m)[0];
+    const p = best && best.s != null ? player(best.pid) : null;
+    if (p && team(p.teamId)) {
+      addScore(p.teamId, m.bonus);
+      m.win = { pid: p.id, team: p.teamId, name: p.name };
+      sfx('correct');
+    } else sfx('wrong');
+    log({ k: 'mini', game: m.game.kind, team: m.win?.team || null, by: m.win?.name || '', delta: m.win ? m.bonus : 0, scores: scoreMap() });
+  }
+  // Called by the clock: intro → play → done.
+  function miniTick(now) {
+    const m = S.mini;
+    if (m.stage === 'intro' && now >= m.until) {
+      m.stage = 'play';
+      m.until = now + GAMES[m.game.kind].time;
+      sfx('open');
+      return true;
+    }
+    if (m.stage === 'play' && (now >= m.until || miniAllIn(m))) { finishMini(); return true; }
+    return false;
   }
 
   // ---------- host window on this computer ----------
@@ -878,8 +1168,10 @@ export async function startPlay(root, boardId) {
       if (f.stage === 'clue') return `Ответы: ${Object.keys(f.answers).length} из ${S.teams.length}`;
       return 'Проверяем ответы';
     }
+    if (S.phase === 'mini' && S.mini) return `Мини-игра «${GAMES[S.mini.game.kind].name}»${S.mini.stage === 'done' ? ': итоги' : ''}`;
     if (!c) return '';
     switch (c.stage) {
+      case 'mod': return `Модернизатор «${MODS[c.mod.kind].name}»${c.mod.done ? '' : `: выбирают ${team(c.mod.team)?.name || '…'}`}`;
       case 'ddIntro': return `Вопрос-ставка! Отвечают ${team(c.ddTeam)?.name || '…'}`;
       case 'reading': return c.dd ? `${team(c.ddTeam)?.name}: ставка ${fmt(c.wager)}` : usesPhones() ? 'Кнопки закрыты' : 'Кто ответит?';
       case 'open': return 'Кнопки открыты — жмите!';
@@ -894,6 +1186,15 @@ export async function startPlay(root, boardId) {
     if (S.phase === 'clue' && c) {
       const v = worth();
       switch (c.stage) {
+        case 'mod': {
+          const m = c.mod;
+          if (m.done) return [{ items: [{ label: hasQ(clueAt(c)) ? 'К вопросу →' : 'Дальше', act: 'modNext', cls: 'primary big', key: 'Пробел' }] }];
+          const t = team(m.team);
+          return [
+            { title: `${MODS[m.kind].ask} Выбирают ${t?.name || '…'}${t && withPhones(t) ? ' — с телефона, или нажми за них' : ''}`, items: S.teams.filter((x) => x.id !== m.team).map((x) => ({ label: x.name, act: 'modTarget', args: { team: x.id }, cls: 'chip' })) },
+            { items: [{ label: '🎲 Случайно', act: 'modTarget', args: { random: true }, cls: 'ghost' }] },
+          ];
+        }
         case 'ddIntro': {
           const t = team(c.ddTeam);
           const rows = [{ title: 'Кто отвечает?', items: S.teams.map((x) => ({ label: x.name, act: 'ddTeam', args: { team: x.id }, cls: 'chip' + (x.id === c.ddTeam ? ' sel' : '') })) }];
@@ -929,11 +1230,13 @@ export async function startPlay(root, boardId) {
           rows.push({ items: [{ label: 'Никто не знает — показать ответ', act: 'reveal', cls: 'ghost', key: 'N' }] });
           return rows;
         }
-        case 'buzzed':
+        case 'buzzed': {
+          const pen = penalty();
           return [
-            { items: [{ label: `Верно +${fmt(v)}`, act: 'correct', cls: 'green big' }, { label: `Неверно −${fmt(v)}`, act: 'wrong', cls: 'red big' }] },
-            { items: [{ label: 'Никто не знает', act: 'reveal', cls: 'ghost', key: 'N' }] },
+            { items: [{ label: `Верно +${fmt(v)}`, act: 'correct', cls: 'green big' }, { label: pen ? `Неверно −${fmt(pen)}` : 'Неверно', act: 'wrong', cls: 'red big' }] },
+            { items: [{ label: c.single ? 'Не знают — показать ответ' : 'Никто не знает', act: 'reveal', cls: 'ghost', key: 'N' }] },
           ];
+        }
         case 'answer':
           return [{ items: [{ label: 'Продолжить', act: 'cont', cls: 'primary big', key: 'Пробел' }] }];
       }
@@ -976,6 +1279,11 @@ export async function startPlay(root, boardId) {
         return rows;
       }
     }
+    if (S.phase === 'mini' && S.mini) {
+      return S.mini.stage === 'done'
+        ? [{ items: [{ label: 'Продолжить', act: 'miniEnd', cls: 'primary big', key: 'Пробел' }] }]
+        : [{ items: [{ label: 'Пропустить мини-игру', act: 'miniEnd', cls: 'ghost' }] }];
+    }
     if (S.phase === 'end') return [{ items: [{ label: 'Сыграть ещё раз', act: 'replay', cls: 'primary big' }] }];
     return [];
   }
@@ -985,11 +1293,21 @@ export async function startPlay(root, boardId) {
     const c = S.clue;
     const hidden = settings.shared;
     if (S.phase === 'board') {
-      return { kind: 'host', lbl: 'Ход игры', text: !team(S.picker) ? 'Кликни по клетке.' : settings.phonePick ? 'Выбирают {team}. Кликни по клетке за них — или дождись, пока выберут у себя.' : 'Выбирают {team}. Кликни по клетке, которую назовут.', team: tinfo(S.picker), controls: [] };
+      const how = settings.phonePick ? 'Кликни по клетке за них — или дождись, пока выберут у себя.' : 'Кликни по клетке, которую назовут.';
+      if (!team(S.picker)) return { kind: 'host', lbl: 'Ход игры', text: 'Кликни по клетке.', controls: [] };
+      if (turns() && team(S.turn) && S.turn !== S.picker) {
+        return { kind: 'host', lbl: 'Ход игры', text: `Ход: {team}. Вопрос им выбирают {team2} — за верный ответ. ${how}`, team: tinfo(S.turn), team2: tinfo(S.picker), controls: [] };
+      }
+      return { kind: 'host', lbl: 'Ход игры', text: `${turns() ? 'Ход: {team}, сами выбирают вопрос.' : 'Выбирают {team}.'} ${how}`, team: tinfo(S.picker), controls: [] };
+    }
+    if (S.phase === 'mini' && S.mini) {
+      const m = S.mini;
+      const text = m.stage === 'intro' ? 'Сейчас начнётся — смотрите в телефоны.' : m.stage === 'play' ? `Играют: ${Object.keys(m.res).length} из ${m.parts.length} уже готовы.` : m.win ? `Победа: ${m.win.name}, +${fmt(m.bonus)} команде {team}.` : 'Никто не справился — очки никому.';
+      return { kind: 'host', lbl: `Мини-игра · ${GAMES[m.game.kind].name}`, text, team: tinfo(m.win?.team), controls: controls() };
     }
     if (S.phase === 'clue' && c) {
       const cl = clueAt(c);
-      return { kind: 'host', answer: c.stage === 'answer' ? null : cl.a, hidden, status: c.stage === 'answer' ? statusText() : '', controls: controls() };
+      return { kind: 'host', answer: c.stage === 'answer' || !hasQ(cl) ? null : cl.a, hidden, status: c.stage === 'answer' ? statusText() : '', controls: controls() };
     }
     if (S.phase === 'final' && S.fin) {
       const f = S.fin;
@@ -1037,6 +1355,10 @@ export async function startPlay(root, boardId) {
     const opt = (v, cur, label) => `<option value="${v}" ${String(cur) === String(v) ? 'selected' : ''}>${label}</option>`;
     return `
       <label class="set-row"><span>Экран ведущего <small class="muted">(«общий» — если его видят игроки: на телевизоре или в трансляции. Тогда ответ скрыт)</small></span><select class="input small" data-set="shared" data-bool>${opt(false, settings.shared, 'Свой')}${opt(true, settings.shared, 'Общий')}</select></label>
+      <label class="set-row"><span>Кто отвечает <small class="muted">(«по очереди» — команды отвечают по кругу, без кнопок; ответили верно — выбираете вопрос следующей команде)</small></span><select class="input small" data-set="answer" data-str>${opt('buzz', settings.answer, 'кто быстрее')}${opt('turns', settings.answer, 'по очереди')}</select></label>
+      <label class="set-row"><span>Минус за ошибку «по очереди» <small class="muted">(иначе неверный ответ просто 0)</small></span><input type="checkbox" data-set="turnMinus" ${settings.turnMinus ? 'checked' : ''}></label>
+      <label class="set-row"><span>Случайные модернизаторы <small class="muted">(клетки-сюрпризы: меняют счёт. Свои можно поставить на любую клетку в редакторе)</small></span><select class="input small" data-set="mods" data-str>${opt('off', settings.mods, 'выкл')}${opt('few', settings.mods, '1 за раунд')}${opt('many', settings.mods, '3 за раунд')}</select></label>
+      <label class="set-row"><span>Мини-игры 🎮 <small class="muted">(иногда между вопросами — быстрая игра на телефонах за доп. очки)</small></span><select class="input small" data-set="mini" data-str>${opt('off', settings.mini, 'выкл')}${opt('rare', settings.mini, 'редко')}${opt('often', settings.mini, 'часто')}</select></label>
       <label class="set-row"><span>Игроки сами выбирают вопрос <small class="muted">(команда, чей ход, жмёт клетку у себя на телефоне. Выключи — и выбирать будет только ведущий)</small></span><input type="checkbox" data-set="phonePick" ${settings.phonePick ? 'checked' : ''}></label>
       <label class="set-row"><span>Вопросы-ставки <small class="muted">(случайные клетки, где можно поставить свои очки)</small></span><input type="checkbox" data-set="dd" ${settings.dd ? 'checked' : ''}></label>
       <label class="set-row"><span>Таймер на ответ</span><select class="input small" data-set="timer">${[0, 10, 15, 20, 30, 45].map((v) => opt(v, settings.timer, v ? `${v} сек` : 'выкл')).join('')}</select></label>
@@ -1054,6 +1376,8 @@ export async function startPlay(root, boardId) {
       settings[k] = i.type === 'checkbox' ? i.checked : 'bool' in i.dataset ? i.value === 'true' : 'str' in i.dataset ? i.value : +i.value;
       sound.on = settings.sound;
       saveSettings();
+      if (S && k === 'answer' && turns() && !team(S.turn)) S.turn = S.picker;
+      if (S && k === 'mods' && ['board', 'clue'].includes(S.phase)) placeMods();
       if (S && S.phase !== 'setup') commit();
     }));
   }
@@ -1111,6 +1435,8 @@ export async function startPlay(root, boardId) {
               <button class="btn small" data-remote>Показать QR пульта</button> <button class="link-btn" data-copy="remote">Скопировать ссылку</button></div>
             </div>
             <div class="team-mode"><button class="btn small" data-tm="teams">Команды</button><button class="btn small" data-tm="solo">Каждый сам за себя</button></div>` : ''}
+          <div class="team-mode"><button class="btn small" data-am="buzz">⚡ Кто быстрее</button><button class="btn small" data-am="turns">🔁 По очереди</button></div>
+          <p class="muted small am-hint"></p>
           <div class="lobby-teams"></div>
           <div class="lobby-free"></div>
           <form class="add-player">
@@ -1129,6 +1455,7 @@ export async function startPlay(root, boardId) {
         commit();
       });
       root.querySelectorAll('[data-tm]').forEach((b) => b.addEventListener('click', () => setTeamMode(b.dataset.tm)));
+      root.querySelectorAll('[data-am]').forEach((b) => b.addEventListener('click', () => { settings.answer = b.dataset.am; saveSettings(); commit(); }));
       $('[data-start]', root).addEventListener('click', () => {
         unlock();
         if (!S.teams.length) return toast('Добавь хотя бы одну команду');
@@ -1148,6 +1475,10 @@ export async function startPlay(root, boardId) {
       });
     }
     root.querySelectorAll('[data-tm]').forEach((b) => b.classList.toggle('primary', b.dataset.tm === S.teamMode));
+    root.querySelectorAll('[data-am]').forEach((b) => b.classList.toggle('primary', b.dataset.am === settings.answer));
+    $('.am-hint', root).textContent = turns()
+      ? 'Команды отвечают по кругу, кнопки не нужны. Ответили верно — выбираете вопрос для следующей команды.'
+      : usesPhones() ? 'Отвечает тот, кто первым нажмёт кнопку на телефоне.' : 'Отвечает тот, кто первым поднимет руку, — ты отмечаешь.';
     $('.add-player', root).hidden = solo();
     const chip = (p) => `<button type="button" class="lp-chip ${p.phone && !p.online ? 'off' : ''}" data-pmenu="${esc(p.id)}">${p.phone ? `<span class="dot ${p.online ? 'on' : 'off'}"></span>` : ''}${esc(p.name)}</button>`;
     setHTML($('.lobby-teams', root), S.teams.length ? S.teams.map((t) => `
@@ -1203,6 +1534,7 @@ export async function startPlay(root, boardId) {
         { name: 'hostwin', label: '👁 Окно ведущего (для трансляции)' },
         ...(usesPhones() ? [{ name: 'remote', label: '📱 Пульт на телефоне (QR)' }] : []),
         { name: 'addTeam', label: '+ Добавить команду' },
+        ...(usesPhones() && S.phase === 'board' ? [{ name: 'mini', label: '🎮 Мини-игра прямо сейчас' }] : []),
         ...(['board', 'clue'].includes(S.phase) ? [{ name: 'endRound', label: 'Завершить раунд досрочно' }] : []),
         { name: 'exit', label: 'Выйти на главную' },
         { name: 'restart', label: 'Начать заново', cls: 'danger' },
@@ -1238,6 +1570,7 @@ export async function startPlay(root, boardId) {
       case 'link':
         if (d.name === 'hostwin') return openHostWindow();
         if (d.name === 'remote') return showRemoteQR();
+        if (d.name === 'mini') return act('mini');
         if (d.name === 'addTeam') {
           const name = await promptDlg('Название команды', '', { placeholder: 'Например, Котики' });
           if (name != null) { newTeam(name.trim() || undefined); if (!team(S.picker)) S.picker = S.teams[0].id; commit(); }
@@ -1329,6 +1662,7 @@ export async function startPlay(root, boardId) {
     if (hostWinShown !== hostWinOpen()) { hostWinShown = !hostWinShown; render(); }
     const c = S.clue;
     const now = Date.now();
+    if (S.phase === 'mini' && S.mini && miniTick(now)) commit();
     if (S.phase === 'clue' && c?.stage === 'open' && c.deadline && now >= c.deadline && !buzzTimer) {
       c.stage = 'answer';
       log({ k: 'none' });
@@ -1355,6 +1689,8 @@ export async function startPlay(root, boardId) {
       e.preventDefault();
       if (c?.stage === 'reading' && usesPhones() && !c.dd) return act('open');
       if (c?.stage === 'answer') return act('cont');
+      if (c?.stage === 'mod' && c.mod.done) return act('modNext');
+      if (S.phase === 'mini' && S.mini?.stage === 'done') return act('miniEnd');
       if (S.phase === 'roundEnd') return act('nextRound');
     }
     if (e.code === 'KeyN' && c) return act('reveal');
@@ -1379,8 +1715,14 @@ export async function startPlay(root, boardId) {
     if (r === 'resume') {
       S = saved.s;
       S.kicked ||= [];
+      S.mods ||= {};
+      if (S.phase === 'mini') { S.phase = S.mini?.after || 'board'; S.mini = null; }
       for (const p of S.players) p.online = false;
-      if (S.clue) { clearBuzz(); if (S.clue.stage === 'open' || S.clue.stage === 'buzzed') { S.clue.stage = 'reading'; S.clue.buzzed = null; } }
+      if (S.clue) {
+        clearBuzz();
+        if (S.clue.single && S.clue.stage === 'buzzed') startQuestion();
+        else if (S.clue.stage === 'open' || S.clue.stage === 'buzzed') { S.clue.stage = 'reading'; S.clue.buzzed = null; }
+      }
       if (S.round >= board.rounds.length) S.round = Math.max(0, firstRound());
       if (S.mode === 'buzzer') {
         root.innerHTML = `<div class="page center"><div class="connecting"><div class="spinner"></div>Восстанавливаем комнату ${esc(S.code)}…</div></div>`;
@@ -1402,9 +1744,11 @@ export async function startPlay(root, boardId) {
     } else render();
   }
 
-  // Test bench buttons (test/): "scare now".
+  // Test bench buttons (test/): "scare now", "mini-game now".
   function onBenchMsg(e) {
-    if (e.origin === location.origin && e.source === parent && e.data?.plyukh === 'scare' && S && !destroyed) scareOne(300);
+    if (e.origin !== location.origin || e.source !== parent || !S || destroyed) return;
+    if (e.data?.plyukh === 'scare') scareOne(300);
+    if (e.data?.plyukh === 'mini') { if (S.phase === 'board') act('mini', { kind: e.data.kind }); else toast('Мини-игру можно запустить, когда на экране доска'); }
   }
 
   return () => {

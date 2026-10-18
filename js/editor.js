@@ -1,8 +1,9 @@
-import * as db from './db.js?v=1791919655137';
-import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1791919655137';
-import { newClue, newRound, filled } from './board.js?v=1791919655137';
-import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1791919655137';
-import * as screamer from './screamer.js?v=1791919655137';
+import * as db from './db.js?v=1792343936758';
+import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1792343936758';
+import { newClue, newRound, filled, hasQ } from './board.js?v=1792343936758';
+import { MODS, MOD_IDS, RANDOM, modIcon, modName } from './mods.js?v=1792343936758';
+import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1792343936758';
+import * as screamer from './screamer.js?v=1792343936758';
 
 export async function renderEditor(root, id) {
   const board = await db.getBoard(id);
@@ -100,11 +101,12 @@ export async function renderEditor(root, id) {
 
   function cellHTML(cl, v, ci, qi) {
     const hidden = cl.media?.phone === false || cl.aMedia?.phone === false;
-    const icons = [cl.media && KIND_ICON[kindOf(cl.media)], cl.aMedia && '💡', hidden && '📵'].filter(Boolean).join(' ');
+    const icons = [cl.mod && modIcon(cl.mod), cl.media && KIND_ICON[kindOf(cl.media)], cl.aMedia && '💡', hidden && '📵'].filter(Boolean).join(' ');
     const has = filled(cl);
-    return `<button class="ed-cell ${has ? '' : 'empty'} ${has && !cl.a.trim() ? 'warn' : ''}" data-clue="${ci},${qi}">
+    const text = cl.q || (hasQ(cl) ? '(только медиа)' : `Модернизатор «${modName(cl.mod)}» без вопроса`);
+    return `<button class="ed-cell ${has ? '' : 'empty'} ${hasQ(cl) && !cl.a.trim() ? 'warn' : ''} ${cl.mod ? 'mod' : ''}" data-clue="${ci},${qi}">
       <span class="v">${fmt(v)}</span>
-      <span class="q">${has ? esc(cl.q || '(только медиа)') : '+ вопрос'}</span>
+      <span class="q">${has ? esc(text) : '+ вопрос'}</span>
       ${icons ? `<span class="icons">${icons}</span>` : ''}
     </button>`;
   }
@@ -323,6 +325,15 @@ export async function renderEditor(root, id) {
         <label class="lbl">Ответ</label>
         <input class="input" data-f="a" placeholder="Правильный ответ">
         <details class="amedia"><summary>Картинка к ответу <span class="muted small">(необязательно — покажется, когда откроется ответ)</span></summary><div class="media-zone" data-slot="aMedia"></div></details>
+        <div class="ce-mod">
+          <label class="lbl">Модернизатор <span class="muted small">(сюрприз, который сработает у того, кто откроет клетку. Можно и без вопроса)</span></label>
+          <select class="input" data-f="mod">
+            <option value="">— нет, обычный вопрос</option>
+            <option value="random">${RANDOM.icon} ${RANDOM.name} — какой-нибудь из списка</option>
+            ${MOD_IDS.map((k) => `<option value="${k}">${MODS[k].icon} ${MODS[k].name}</option>`).join('')}
+          </select>
+          <p class="muted small ce-mod-desc"></p>
+        </div>
         <div class="ce-foot">
           <button type="button" class="btn" data-ce="prev">← Назад</button>
           <button type="button" class="btn ghost danger-text" data-ce="clear">Очистить</button>
@@ -333,6 +344,12 @@ export async function renderEditor(root, id) {
       onMount: (w, close) => {
         const q = $('[data-f=q]', w);
         const a = $('[data-f=a]', w);
+        const mod = $('[data-f=mod]', w);
+        const modDesc = () => {
+          const id = clue().mod;
+          $('.ce-mod-desc', w).textContent = !id ? '' : MODS[id] ? MODS[id].desc(r.values[cur.qi]) : 'Каждый раз выпадет случайный модернизатор.';
+          $('.ce-mod', w).classList.toggle('on', !!id);
+        };
         const clue = () => board.rounds[tab].categories[cur.ci].clues[cur.qi];
         const refreshCell = () => {
           const cell = $(`[data-clue="${cur.ci},${cur.qi}"]`, root);
@@ -345,6 +362,8 @@ export async function renderEditor(root, id) {
           $('.ce-where', w).innerHTML = `<b>${esc(cat)}</b> · ${fmt(r.values[cur.qi])}`;
           q.value = cl.q;
           a.value = cl.a;
+          mod.value = cl.mod || '';
+          modDesc();
           zones.media = mediaZone($('[data-slot=media]', w), () => clue().media, (v) => { clue().media = v; }, () => { touch(); refreshCell(); });
           zones.aMedia = mediaZone($('[data-slot=aMedia]', w), () => clue().aMedia, (v) => { clue().aMedia = v; }, () => { touch(); refreshCell(); });
           $('.amedia', w).open = !!cl.aMedia;
@@ -356,6 +375,11 @@ export async function renderEditor(root, id) {
         const resetZones = () => $$('.media-zone', w).forEach((z) => z.replaceWith(z.cloneNode(false)));
         q.addEventListener('input', () => { clue().q = q.value; touch(); refreshCell(); });
         a.addEventListener('input', () => { clue().a = a.value; touch(); refreshCell(); });
+        mod.addEventListener('change', () => {
+          if (mod.value) clue().mod = mod.value;
+          else delete clue().mod;
+          modDesc(); touch(); refreshCell();
+        });
         const go = (d) => {
           const i = order.findIndex((o) => o.ci === cur.ci && o.qi === cur.qi);
           const n = order[i + d];
@@ -375,6 +399,7 @@ export async function renderEditor(root, id) {
             const cl = clue();
             dropClueMedia(cl);
             Object.assign(cl, newClue());
+            delete cl.mod;
             touch(); refreshCell(); resetZones(); load();
           }
         });
