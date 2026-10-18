@@ -1,19 +1,19 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1792357741893';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792357741893';
-import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792357741893';
-import { mediaEl, kindOf } from './media.js?v=1792357741893';
-import { play as sfx, sound, unlock } from './sound.js?v=1792357741893';
-import { Host, errText, hostChannelName } from './net.js?v=1792357741893';
-import { setHTML } from './controls.js?v=1792357741893';
-import { saveGame } from './history.js?v=1792357741893';
-import { MediaSender, describe } from './mediasync.js?v=1792357741893';
-import { VERSION } from './version.js?v=1792357741893';
-import { createScreen } from './gameui.js?v=1792357741893';
-import * as screamer from './screamer.js?v=1792357741893';
-import { MODS, modHead, resolveMod } from './mods.js?v=1792357741893';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792357741893';
+import * as db from './db.js?v=1792358422380';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792358422380';
+import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792358422380';
+import { mediaEl, kindOf } from './media.js?v=1792358422380';
+import { play as sfx, sound, unlock } from './sound.js?v=1792358422380';
+import { Host, errText, hostChannelName } from './net.js?v=1792358422380';
+import { setHTML } from './controls.js?v=1792358422380';
+import { saveGame } from './history.js?v=1792358422380';
+import { MediaSender, describe } from './mediasync.js?v=1792358422380';
+import { VERSION } from './version.js?v=1792358422380';
+import { createScreen } from './gameui.js?v=1792358422380';
+import * as screamer from './screamer.js?v=1792358422380';
+import { MODS, modHead, resolveMod } from './mods.js?v=1792358422380';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792358422380';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 'off', mini: 'rare', secret: 'one' };
@@ -108,6 +108,15 @@ export async function startPlay(root, boardId) {
     const t = [...S.teams].sort((a, b) => members(a.id).length - members(b.id).length)[0];
     p.teamId = t.id;
     return t;
+  }
+
+  // A game with no teams left (everyone started without picking one) has no scores and nothing to
+  // join: put the players without a team into teams again.
+  function ensureTeams() {
+    if (['setup', 'lobby'].includes(S.phase) || S.teams.length) return;
+    for (const p of S.players) if (!team(p.teamId)) autoTeam(p);
+    if (!team(S.picker)) S.picker = S.teams[0]?.id || null;
+    if (!team(S.turn)) S.turn = S.picker;
   }
 
   // ---------- persistence & undo ----------
@@ -703,6 +712,7 @@ export async function startPlay(root, boardId) {
       if (solo()) { const t = soloTeam(p); t.name = name; }
       else if (!team(p.teamId) && d.auto) autoTeam(p);
     }
+    ensureTeams();
     if (!team(S.picker) && !['setup', 'lobby'].includes(S.phase)) S.picker = p.teamId;
     if (!team(S.turn) && !['setup', 'lobby'].includes(S.phase)) S.turn = p.teamId;
     const old = conns.get(p.id);
@@ -1497,7 +1507,11 @@ export async function startPlay(root, boardId) {
         if (!S.teams.length) return toast('Добавь хотя бы одну команду');
         if (usesPhones() && !S.players.length) return toast('Ждём хотя бы одного игрока');
         if (firstRound() < 0) return toast('В этой игре ещё нет вопросов — заполни доску в редакторе');
-        if (!solo()) S.teams = S.teams.filter((t) => members(t.id).length || !usesPhones() || S.teams.length <= 1);
+        if (!solo() && usesPhones()) {
+          // Whoever didn't pick a team gets one, then teams nobody joined are dropped.
+          for (const p of S.players) if (!team(p.teamId)) autoTeam(p);
+          S.teams = S.teams.filter((t) => members(t.id).length || S.teams.length <= 1);
+        }
         beginGame();
         commit();
       });
@@ -1787,6 +1801,7 @@ export async function startPlay(root, boardId) {
       S = saved.s;
       S.kicked ||= [];
       S.mods ||= {};
+      ensureTeams();
       if (S.phase === 'mini') { S.phase = S.mini?.after || 'board'; S.mini = null; }
       for (const p of S.players) p.online = false;
       if (S.clue) {

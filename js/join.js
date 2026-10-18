@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, promptDlg, LOGO_SVG } from './util.js?v=1792357741893';
-import { VERSION } from './version.js?v=1792357741893';
-import { Client, LocalLink } from './net.js?v=1792357741893';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792357741893';
-import { MediaReceiver } from './mediasync.js?v=1792357741893';
-import { createScreen, prefs } from './gameui.js?v=1792357741893';
-import * as screamer from './screamer.js?v=1792357741893';
-import { MiniPlayer } from './minigames.js?v=1792357741893';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, promptDlg, LOGO_SVG } from './util.js?v=1792358422380';
+import { VERSION } from './version.js?v=1792358422380';
+import { Client, LocalLink } from './net.js?v=1792358422380';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792358422380';
+import { MediaReceiver } from './mediasync.js?v=1792358422380';
+import { createScreen, prefs } from './gameui.js?v=1792358422380';
+import * as screamer from './screamer.js?v=1792358422380';
+import { MiniPlayer } from './minigames.js?v=1792358422380';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);

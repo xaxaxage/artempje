@@ -4,7 +4,7 @@
 //   item: { label, act, args?, cls?, key?, disabled? }
 //         { type: 'wager', label, act, args?, min, max, value? }
 //         { type: 'note', text }
-import { esc } from './util.js?v=1792357741893';
+import { esc } from './util.js?v=1792358422380';
 
 function itemHTML(it) {
   const args = esc(JSON.stringify(it.args || {}));
