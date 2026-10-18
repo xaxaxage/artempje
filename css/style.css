@@ -203,6 +203,14 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .pl-row .muted { flex: 1; min-width: 0; }
 .pl-go { font-size: 1.2rem; color: var(--muted); }
 .lobby-tip { margin: 4px 0 0; }
+
+/* the host's controls inside a player tab (secret code 556) */
+.spy { position: fixed; top: 0; right: 0; bottom: 0; width: min(400px, 100%); z-index: 80; display: flex; flex-direction: column; background: var(--bg); border-left: 1px solid var(--line); box-shadow: -8px 0 30px rgba(0, 0, 0, .25); }
+.spy[hidden] { display: none; }
+.spy-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--bg2); }
+.spy-head span { flex: 1; color: var(--muted); font-size: 13px; }
+.spy-head button { border: none; background: none; color: var(--muted); font-size: 22px; line-height: 1; cursor: pointer; }
+.spy iframe { flex: 1; width: 100%; border: 0; }
 .lock-note { font-weight: 600; margin: 4px 0 8px; }
 .qr-dlg { text-align: center; }
 .qr-dlg .dlg-actions { justify-content: center; }

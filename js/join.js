@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1792357221843';
-import { VERSION } from './version.js?v=1792357221843';
-import { Client, LocalLink } from './net.js?v=1792357221843';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792357221843';
-import { MediaReceiver } from './mediasync.js?v=1792357221843';
-import { createScreen, prefs } from './gameui.js?v=1792357221843';
-import * as screamer from './screamer.js?v=1792357221843';
-import { MiniPlayer } from './minigames.js?v=1792357221843';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1792357451862';
+import { VERSION } from './version.js?v=1792357451862';
+import { Client, LocalLink } from './net.js?v=1792357451862';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792357451862';
+import { MediaReceiver } from './mediasync.js?v=1792357451862';
+import { createScreen, prefs } from './gameui.js?v=1792357451862';
+import * as screamer from './screamer.js?v=1792357451862';
+import { MiniPlayer } from './minigames.js?v=1792357451862';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -17,6 +17,8 @@ const role = hostKey ? 'host' : 'player';
 // Host window opened from the game screen on the same computer (no room code, no network).
 const local = role === 'host' && params.get('local') === '1';
 if (local) document.title = 'Окно ведущего — artempje';
+// The host's controls opened inside a player tab by the secret code (see "spy" below).
+const spyFrame = local && params.has('spy') && window.parent !== window;
 // Test bench (test/): a fake player in a frame, with its own id and an automatic team.
 const testN = params.get('test');
 
@@ -59,6 +61,8 @@ const homeLink = '<a class="back-link" href="../">← На главную</a>';
 function leave(home = false) {
   screamer.stop();
   mini.close();
+  spyEl?.remove();
+  spyEl = null;
   client?.stop();
   client = null;
   view = null;
@@ -433,8 +437,8 @@ function renderPlayer() {
 function mountRemote() {
   mounted = 'remote';
   app.innerHTML = `<div class="rm">
-    <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>${local ? 'Окно ведущего' : 'Пульт'}</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span>${menuButton}</header>
-    ${local ? '<p class="rm-warn">Это окно не показывай игрокам: в Discord выбирай «Окно» с игрой, а не весь экран.</p>' : ''}
+    <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>${local ? 'Окно ведущего' : 'Пульт'}</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span>${spyFrame ? '' : menuButton}</header>
+    ${local && !spyFrame ? '<p class="rm-warn">Это окно не показывай игрокам: в Discord выбирай «Окно» с игрой, а не весь экран.</p>' : ''}
     <div class="rm-info"></div>
     <div class="rm-ctl"></div>
     <div class="rm-players"></div>
@@ -537,6 +541,50 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (!e.repeat) press();
   }
+  if (role === 'player' && !e.target.closest('input, textarea')) spyKey(e.key);
+  if (role === 'player' && e.key === 'Escape' && spyEl && !spyEl.hidden) spyEl.hidden = true;
+  // Inside the spy panel the keys land in its frame: pass the digits up, so 556 hides it again.
+  if (spyFrame && /^\d$/.test(e.key) && !e.target.closest('input, textarea')) parent.postMessage({ plyukh: 'spykey', key: e.key }, location.origin);
+});
+
+// ---------- spy: the host plays along from a player tab ----------
+// In the browser that runs the game, typing 556 on a player screen opens the host's controls
+// (answers, right/wrong, scores, kicking) in a side panel; 556 again hides it. On anyone else's
+// device the code does nothing: only this browser has the room's host key.
+const SPY_CODE = '556';
+let spyKeys = '';
+let spyKeyAt = 0;
+let spyEl = null;
+
+function hostKeyHere() {
+  for (const k of ['plyukh-game', 'plyukh-game-test']) {
+    const s = store.get(k)?.s;
+    if (s?.hostKey && s.code === code) return s.hostKey;
+  }
+  return '';
+}
+
+function spyKey(key) {
+  if (!/^\d$/.test(key)) return;
+  const now = Date.now();
+  spyKeys = (now - spyKeyAt > 1500 ? '' : spyKeys) + key;
+  spyKeyAt = now;
+  if (!spyKeys.endsWith(SPY_CODE) || mounted !== 'player') return;
+  spyKeys = '';
+  if (spyEl) { spyEl.hidden = !spyEl.hidden; return; }
+  const roomKey = hostKeyHere();
+  if (!roomKey) return;
+  spyEl = document.createElement('div');
+  spyEl.className = 'spy';
+  spyEl.innerHTML = `<div class="spy-head"><b>🕵️ Ты ведущий</b><span>556 или Esc — спрятать</span><button type="button" title="Спрятать">×</button></div>
+    <iframe src="?k=${encodeURIComponent(roomKey)}&local=1&spy=1" title="Пульт ведущего"></iframe>`;
+  spyEl.querySelector('button').addEventListener('click', () => { spyEl.hidden = true; });
+  document.body.append(spyEl);
+}
+
+window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin || e.data?.plyukh !== 'spykey' || !spyEl || e.source !== spyEl.querySelector('iframe').contentWindow) return;
+  spyKey(e.data.key);
 });
 
 // Keep the phone screen awake during the game.
