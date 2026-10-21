@@ -24,9 +24,10 @@ export const modName = (id) => (MODS[id] || RANDOM).name;
 export const modHead = (id) => MODS[id]?.head || 'Модернизатор!';
 
 // Picks the modifier that will really happen: 'random' gets rolled, and one that can't work
-// here (one team, or a cell without a question) is swapped for one that can.
-export function resolveMod(id, teams, hasQuestion) {
-  const ok = (k) => (teams > 1 || !MODS[k].many) && (hasQuestion || !MODS[k].question);
+// here (one team, or a cell without a question) is swapped for one that can. `skip` keeps some
+// out of the roll: the game's own random cells never turn into secret questions, those have their own count.
+export function resolveMod(id, teams, hasQuestion, skip = []) {
+  const ok = (k) => (teams > 1 || !MODS[k].many) && (hasQuestion || !MODS[k].question) && !skip.includes(k);
   if (MODS[id] && ok(id)) return id;
   const pool = MOD_IDS.filter(ok);
   return pool[Math.floor(Math.random() * pool.length)];

@@ -345,3 +345,18 @@
 .mini-list li i { width: 10px; height: 10px; border-radius: 50%; flex: none; }
 .mini-list li span { flex: 1; text-align: left; }
 .mini-close { opacity: .6; }
+
+/* ---------- theme parade: film credits before the game ---------- */
+.g-parade { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 6px; }
+.g-par-k { margin: 0; text-transform: uppercase; letter-spacing: .14em; font-weight: 700; font-size: 13px; color: var(--g-muted); }
+.g-par-win { position: relative; flex: 1; min-height: 0; width: 100%; overflow: hidden; -webkit-mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent); mask-image: linear-gradient(transparent, #000 14%, #000 86%, transparent); }
+.g-par-roll { position: absolute; left: 0; right: 0; top: 100%; display: flex; flex-direction: column; align-items: center; gap: clamp(18px, 4vh, 44px); padding: 0 16px; text-align: center; }
+.g-par-item { font-weight: 800; font-size: clamp(24px, 4.4vw, 64px); line-height: 1.15; color: var(--g-ink); overflow-wrap: anywhere; }
+.g-par-item:nth-child(3n + 2) { color: var(--g-accent); }
+.g-parade.done { justify-content: center; }
+.g-par-all { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 980px; animation: g-pop .45s cubic-bezier(.2, 1.4, .4, 1) both; }
+.g-par-all span { padding: 10px 16px; border-radius: 12px; background: var(--g-cell); color: var(--g-cell-ink); font-weight: 700; font-size: clamp(14px, 1.7vw, 22px); }
+@media (max-width: 760px) {
+  .g-par-item { font-size: 24px; }
+  .g-par-all span { font-size: 14px; padding: 7px 11px; }
+}

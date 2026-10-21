@@ -1,11 +1,11 @@
 // One played game, as it happened: who played, every question in order, and a "time machine"
 // that steps through the game showing the board, the question and the score at that moment.
-import * as db from './db.js?v=1792358422380';
-import { esc, nl2br, fmt, signed, plural, confirmDlg } from './util.js?v=1792358422380';
-import { getGame, removeGame } from './history.js?v=1792358422380';
-import { srcOf } from './media.js?v=1792358422380';
-import { MODS } from './mods.js?v=1792358422380';
-import { GAMES } from './minigames.js?v=1792358422380';
+import * as db from './db.js?v=1792619867792';
+import { esc, nl2br, fmt, signed, plural, confirmDlg } from './util.js?v=1792619867792';
+import { getGame, removeGame } from './history.js?v=1792619867792';
+import { srcOf } from './media.js?v=1792619867792';
+import { MODS } from './mods.js?v=1792619867792';
+import { GAMES } from './minigames.js?v=1792619867792';
 
 const MODE_NAMES = { simple: 'простой режим', buzzer: 'с кнопками' };
 // Team colours are validated for the light surface; these two need a deeper step on the dark one.

@@ -2,8 +2,8 @@
 //   { kind: 'file', id, mime }      blob stored in IndexedDB
 //   { kind: 'url', url, mime }      link to an image/audio/video on the web
 //   { kind: 'youtube', vid, start } YouTube video
-import * as db from './db.js?v=1792358422380';
-import { uid } from './util.js?v=1792358422380';
+import * as db from './db.js?v=1792619867792';
+import { uid } from './util.js?v=1792619867792';
 
 const urlCache = new Map();
 

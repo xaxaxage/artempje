@@ -1,7 +1,7 @@
 // The game screen shared by the host and the players: three layouts, soft themes and the ⚙ popover.
 // Pages build a plain "model" of what to show; this module turns it into DOM and reports clicks back.
-import { esc, nl2br, fmt, store } from './util.js?v=1792358422380';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792358422380';
+import { esc, nl2br, fmt, store } from './util.js?v=1792619867792';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792619867792';
 
 export const THEMES = [['sand', 'Песок', '#5b8a85'], ['studio', 'Студия', '#3a4a85'], ['night', 'Ночь', '#a99cf0'], ['mint', 'Мята', '#4fae8f'], ['lilac', 'Лаванда', '#8c7cc2']];
 export const LAYOUTS = [['a', 'Колонка справа'], ['b', 'Счёт внизу'], ['c', 'Телешоу']];
@@ -148,12 +148,16 @@ export function createScreen(parent, opts) {
       main._key = key;
       main._html = null;
       if (v.v === 'board') main.innerHTML = `<div class="g-board"></div><div class="g-hint"></div>`;
+      else if (v.v === 'parade') main.innerHTML = v.done
+        ? '<div class="g-parade done"><p class="g-par-k">Темы игры</p><div class="g-par-all"></div></div>'
+        : '<div class="g-parade"><p class="g-par-k">Темы игры</p><div class="g-par-win"><div class="g-par-roll"></div></div></div>';
       else if (v.v === 'clue' || v.v === 'finq') main.innerHTML = `<div class="g-q"><div class="box q-cat"><span class="c"></span><b class="l"></b></div><div class="box q-body"><div class="q-text"></div><div class="q-media"></div></div><div class="q-extra"></div></div>`;
       else main.innerHTML = `<div class="g-banner"></div>`;
     }
     setConfetti(v.v === 'end');
     if (v.v === 'board') return drawBoard(v);
     if (v.v === 'clue' || v.v === 'finq') return drawClue(v);
+    if (v.v === 'parade') return drawParade(v);
     setHTML($('.g-banner'), bannerHTML(v));
   }
 
@@ -170,6 +174,30 @@ export function createScreen(parent, opts) {
     }));
     setHTML(b, h);
     setHTML($('.g-hint'), v.hint ? esc(v.hint) : '');
+  }
+
+  // The themes float up like film credits. The position comes from the clock, not from a CSS
+  // animation: a phone that was locked for a moment catches up instead of lagging behind the host.
+  // The clock is reset only when the host pauses, resumes or replays (seq), from the elapsed time it sent.
+  let paradeRaf = 0;
+  function drawParade(v) {
+    if (v.done) { setHTML($('.g-par-all'), v.list.map((t) => `<span>${esc(t)}</span>`).join('')); return; }
+    const roll = $('.g-par-roll');
+    const list = v.list.join('\n');
+    if (roll._list !== list) { roll._list = list; roll.innerHTML = v.list.map((t) => `<div class="g-par-item">${esc(t)}</div>`).join(''); }
+    if (roll._seq !== v.seq) { roll._seq = v.seq; roll._t0 = performance.now() - v.elapsed; }
+    roll._dur = v.dur;
+    roll._stop = v.paused ? v.elapsed : null;
+    if (paradeRaf) return;
+    const step = () => {
+      const r = el.querySelector('.g-par-roll');
+      if (!r) { paradeRaf = 0; return; }
+      const p = Math.min(1, Math.max(0, (r._stop ?? performance.now() - r._t0) / r._dur));
+      r.style.top = `${(1 - p) * 100}%`;
+      r.style.transform = `translateY(${-p * 100}%)`;
+      paradeRaf = requestAnimationFrame(step);
+    };
+    step();
   }
 
   function drawClue(v) {
@@ -396,7 +424,7 @@ export function createScreen(parent, opts) {
     closePop() { popOpen = false; drawPop(); },
     refreshPop() { if (popOpen) drawPop(); },
     setProgress(text) { const p = el.querySelector('.pc-pct'); if (p) p.textContent = text; },
-    destroy() { clearInterval(timer); cancelAnimationFrame(confettiRaf); el.remove(); },
+    destroy() { clearInterval(timer); cancelAnimationFrame(confettiRaf); cancelAnimationFrame(paradeRaf); el.remove(); },
   };
 }
 

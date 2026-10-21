@@ -1,25 +1,25 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1792358422380';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792358422380';
-import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792358422380';
-import { mediaEl, kindOf } from './media.js?v=1792358422380';
-import { play as sfx, sound, unlock } from './sound.js?v=1792358422380';
-import { Host, errText, hostChannelName } from './net.js?v=1792358422380';
-import { setHTML } from './controls.js?v=1792358422380';
-import { saveGame } from './history.js?v=1792358422380';
-import { MediaSender, describe } from './mediasync.js?v=1792358422380';
-import { VERSION } from './version.js?v=1792358422380';
-import { createScreen } from './gameui.js?v=1792358422380';
-import * as screamer from './screamer.js?v=1792358422380';
-import { MODS, modHead, resolveMod } from './mods.js?v=1792358422380';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792358422380';
+import * as db from './db.js?v=1792619867792';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792619867792';
+import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792619867792';
+import { mediaEl, kindOf } from './media.js?v=1792619867792';
+import { play as sfx, sound, unlock } from './sound.js?v=1792619867792';
+import { Host, errText, hostChannelName } from './net.js?v=1792619867792';
+import { setHTML } from './controls.js?v=1792619867792';
+import { saveGame } from './history.js?v=1792619867792';
+import { MediaSender, describe } from './mediasync.js?v=1792619867792';
+import { VERSION } from './version.js?v=1792619867792';
+import { createScreen } from './gameui.js?v=1792619867792';
+import * as screamer from './screamer.js?v=1792619867792';
+import { MODS, modHead, resolveMod } from './mods.js?v=1792619867792';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792619867792';
 
 const SETTINGS_KEY = 'plyukh-settings';
-const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 'off', mini: 'rare', secret: 'one' };
+const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 1, parade: true };
 const BUZZ_WINDOW_MS = 220;
-const MODS_PER_ROUND = { few: 1, many: 3 };
-const SECRETS_PER_ROUND = { one: 1, two: 2 };
+// Older versions kept these counts as words.
+const COUNT_WORDS = { off: 0, one: 1, two: 2, few: 1, many: 3 };
 const MINI_CHANCE = { rare: 0.12, often: 0.3 }; // after each question, once enough questions passed
 const MINI_GAP = { rare: 4, often: 2 };
 const TEAM_COLORS = ['#df6e5c', '#5b8def', '#4fae8f', '#e0a43a', '#a77fd6', '#7d9a3a', '#d6588f', '#2a9fb5'];
@@ -41,6 +41,7 @@ export async function startPlay(root, boardId) {
   const SAVE_KEY = autotest ? 'plyukh-game-test' : 'plyukh-game';
 
   const settings = { ...DEFAULTS, ...store.get(SETTINGS_KEY, {}) };
+  for (const k of ['secret', 'mods']) if (typeof settings[k] !== 'number') settings[k] = COUNT_WORDS[settings[k]] ?? DEFAULTS[k];
   sound.on = settings.sound;
   let S = null; // game state (serialisable)
   let net = null;
@@ -200,9 +201,8 @@ export async function startPlay(root, boardId) {
     }));
     shuffle(cands);
     // A secret question has to be handed to someone else, so it needs two teams.
-    const secrets = S.teams.length > 1 ? SECRETS_PER_ROUND[settings.secret] || 0 : 0;
-    for (const key of cands.splice(0, secrets)) S.mods[key] = 'cat';
-    for (const key of cands.splice(0, MODS_PER_ROUND[settings.mods] || 0)) S.mods[key] = 'random';
+    for (const key of cands.splice(0, S.teams.length > 1 ? settings.secret : 0)) S.mods[key] = 'cat';
+    for (const key of cands.splice(0, settings.mods)) S.mods[key] = 'random';
   }
 
   function clearBuzz() {
@@ -281,8 +281,29 @@ export async function startPlay(root, boardId) {
     placeDDs();
     placeMods();
     S.phase = 'board';
+    S.parade = null;
     log({ k: 'start', r: S.round, picker: S.picker, scores: scoreMap() });
+    if (settings.parade) startParade('board');
   }
+
+  // ---------- theme parade ----------
+  // Before the first question all themes of the game, the final's too, shuffled, float up every screen
+  // like film credits while the host reads them out. Phones get the elapsed time and run the same roll.
+  function gameThemes() {
+    const names = [];
+    for (const r of board.rounds) {
+      if (roundPlayable(r)) for (const c of r.categories) if (c.name.trim() && c.clues.some(filled)) names.push(c.name.trim());
+    }
+    if (finalReady(board) && board.final.category?.trim()) names.push(board.final.category.trim());
+    return shuffle([...new Set(names)]);
+  }
+  function startParade(after) {
+    const list = gameThemes();
+    if (!list.length) return;
+    S.parade = { list, dur: Math.max(10000, list.length * 2600), start: Date.now(), paused: null, seq: 0, done: false, after };
+    S.phase = 'parade';
+  }
+  const paradeElapsed = (p) => p.paused ?? Date.now() - p.start;
 
   // ---------- modifiers (js/mods.js) ----------
   // Applies the modifier of the open cell; `target` is the team picked for swap, steal or the secret question.
@@ -407,7 +428,8 @@ export async function startPlay(root, boardId) {
       S.phase = 'clue';
       log({ k: 'pick', r: S.round, c, q, value: S.clue.value, dd, picker: S.picker, ...(turns() ? { turn: S.turn } : {}) });
       if (modId) {
-        S.clue.mod = { kind: resolveMod(modId, S.teams.length, hasQ(cl)), team: who, target: null, done: false, changes: [], note: '' };
+        const skip = !cl.mod && modId === 'random' ? ['cat'] : [];
+        S.clue.mod = { kind: resolveMod(modId, S.teams.length, hasQ(cl), skip), team: who, target: null, done: false, changes: [], note: '' };
         S.clue.stage = 'mod';
         sfx('dd');
         if (!MODS[S.clue.mod.kind].target) applyMod();
@@ -618,6 +640,27 @@ export async function startPlay(root, boardId) {
       S.locked = on ?? !S.locked;
       toast(S.locked ? 'Комната закрыта: новые игроки не зайдут' : 'Комната открыта: можно заходить по коду');
     },
+    parade() {
+      if (S.phase === 'board') startParade('board');
+    },
+    paradePause() {
+      const p = S.parade;
+      if (S.phase !== 'parade' || p.done) return;
+      if (p.paused == null) p.paused = Date.now() - p.start;
+      else { p.start = Date.now() - p.paused; p.paused = null; }
+      p.seq++;
+    },
+    paradeAgain() {
+      const p = S.parade;
+      if (S.phase !== 'parade') return;
+      Object.assign(p, { start: Date.now(), paused: null, done: false });
+      p.seq++;
+    },
+    paradeEnd() {
+      if (S.phase !== 'parade') return;
+      S.phase = S.parade.after || 'board';
+      S.parade = null;
+    },
     mini({ kind } = {}) {
       if (S.phase === 'board' && usesPhones()) startMini(kind);
     },
@@ -809,6 +852,10 @@ export async function startPlay(root, boardId) {
       };
     }
     if (S.phase === 'mini' && S.mini) return miniView(pid);
+    if (S.phase === 'parade' && S.parade) {
+      const p = S.parade;
+      return { v: 'parade', key: p.done ? 'done' : 'roll', list: p.list, dur: p.dur, elapsed: paradeElapsed(p), paused: p.paused != null, seq: p.seq, done: p.done };
+    }
     if (S.phase === 'clue') {
       const cl = clueAt(c);
       const cat = r.categories[c.c].name;
@@ -1012,6 +1059,7 @@ export async function startPlay(root, boardId) {
         grid: r.categories.map((cat, ci) => cat.clues.map((x, qi) => ({ f: filled(x), u: !!S.used[keyOf(S.round, ci, qi)], d: !!S.dds[keyOf(S.round, ci, qi)], m: x.mod || S.mods?.[keyOf(S.round, ci, qi)] || '' }))),
       } : null,
       clue: c ? { cat: r.categories[c.c].name, value: worth() || c.value, q: cl.q, a: cl.a, stage: c.stage, dd: c.dd, status: statusText() } : null,
+      parade: S.phase === 'parade' && S.parade ? { list: S.parade.list, status: statusText() } : null,
       mini: S.phase === 'mini' && S.mini ? { name: `${GAMES[S.mini.game.kind].icon} ${GAMES[S.mini.game.kind].name}`, status: statusText() } : null,
       fin: S.phase === 'final' ? { cat: board.final.category, q: board.final.q, a: board.final.a, stage: S.fin.stage, status: statusText() } : null,
       teams: S.teams.map((t) => ({ id: t.id, name: t.name, color: t.color, score: t.score, online: canPlay(t), members: members(t.id).map((p) => p.name), picker: S.picker === t.id })),
@@ -1043,7 +1091,7 @@ export async function startPlay(root, boardId) {
       if (filled(cl) && !S.used[keyOf(i, ci, qi)]) out.push(cl.media, cl.aMedia);
     }));
     if (['setup', 'lobby'].includes(S.phase)) add(firstRound());
-    else if (['board', 'clue', 'roundEnd', 'mini'].includes(S.phase)) add(S.round);
+    else if (['board', 'clue', 'roundEnd', 'mini', 'parade'].includes(S.phase)) add(S.round);
     if (S.phase === 'roundEnd') add(nextRoundIndex());
     if (finalReady(board) && S.phase !== 'end') out.push(board.final.media, board.final.aMedia);
     return out.filter(forPhones);
@@ -1210,6 +1258,7 @@ export async function startPlay(root, boardId) {
       if (f.stage === 'clue') return `Ответы: ${Object.keys(f.answers).length} из ${S.teams.length}`;
       return 'Проверяем ответы';
     }
+    if (S.phase === 'parade' && S.parade) return S.parade.done ? 'Темы показаны' : 'Темы проплывают по экрану';
     if (S.phase === 'mini' && S.mini) return `Мини-игра «${GAMES[S.mini.game.kind].name}»${S.mini.stage === 'done' ? ': итоги' : ''}`;
     if (!c) return '';
     switch (c.stage) {
@@ -1321,6 +1370,12 @@ export async function startPlay(root, boardId) {
         return rows;
       }
     }
+    if (S.phase === 'parade' && S.parade) {
+      const p = S.parade;
+      const first = !S.log?.some((e) => e.k === 'pick');
+      if (p.done) return [{ items: [{ label: first ? 'Начать игру →' : 'К доске →', act: 'paradeEnd', cls: 'primary big', key: 'Пробел' }, { label: '↺ Ещё раз', act: 'paradeAgain', cls: 'ghost' }] }];
+      return [{ items: [{ label: p.paused != null ? '▶ Дальше' : '⏸ Пауза', act: 'paradePause', key: 'Пробел' }, { label: 'Пропустить →', act: 'paradeEnd', cls: 'ghost' }] }];
+    }
     if (S.phase === 'mini' && S.mini) {
       return S.mini.stage === 'done'
         ? [{ items: [{ label: 'Продолжить', act: 'miniEnd', cls: 'primary big', key: 'Пробел' }] }]
@@ -1341,6 +1396,11 @@ export async function startPlay(root, boardId) {
         return { kind: 'host', lbl: 'Ход игры', text: `Ход: {team}. Вопрос им выбирают {team2} — за верный ответ. ${how}`, team: tinfo(S.turn), team2: tinfo(S.picker), controls: [] };
       }
       return { kind: 'host', lbl: 'Ход игры', text: `${turns() ? 'Ход: {team}, сами выбирают вопрос.' : 'Выбирают {team}.'} ${how}`, team: tinfo(S.picker), controls: [] };
+    }
+    if (S.phase === 'parade' && S.parade) {
+      const p = S.parade;
+      const fin = finalReady(board) && board.final.category?.trim() ? ' Тема финала тоже среди них.' : '';
+      return { kind: 'host', lbl: `Темы игры · ${p.list.length}`, text: p.done ? 'Все темы показаны — можно начинать.' : `Читай темы вслух, пока они проплывают.${fin}`, controls: controls() };
     }
     if (S.phase === 'mini' && S.mini) {
       const m = S.mini;
@@ -1399,8 +1459,9 @@ export async function startPlay(root, boardId) {
       <label class="set-row"><span>Экран ведущего <small class="muted">(«общий» — если его видят игроки: на телевизоре или в трансляции. Тогда ответ скрыт)</small></span><select class="input small" data-set="shared" data-bool>${opt(false, settings.shared, 'Свой')}${opt(true, settings.shared, 'Общий')}</select></label>
       <label class="set-row"><span>Кто отвечает <small class="muted">(«по очереди» — команды отвечают по кругу, без кнопок; ответили верно — выбираете вопрос следующей команде)</small></span><select class="input small" data-set="answer" data-str>${opt('buzz', settings.answer, 'кто быстрее')}${opt('turns', settings.answer, 'по очереди')}</select></label>
       <label class="set-row"><span>Минус за ошибку «по очереди» <small class="muted">(иначе неверный ответ просто 0)</small></span><input type="checkbox" data-set="turnMinus" ${settings.turnMinus ? 'checked' : ''}></label>
-      <label class="set-row"><span>Секретные вопросы 🤫 <small class="muted">(случайная клетка: кто её откроет — не глядя отдаёт вопрос другой команде, очки только у отвечающих)</small></span><select class="input small" data-set="secret" data-str>${opt('off', settings.secret, 'выкл')}${opt('one', settings.secret, '1 за раунд')}${opt('two', settings.secret, '2 за раунд')}</select></label>
-      <label class="set-row"><span>Случайные модернизаторы <small class="muted">(клетки-сюрпризы: меняют счёт. Свои можно поставить на любую клетку в редакторе)</small></span><select class="input small" data-set="mods" data-str>${opt('off', settings.mods, 'выкл')}${opt('few', settings.mods, '1 за раунд')}${opt('many', settings.mods, '3 за раунд')}</select></label>
+      <label class="set-row"><span>Парад тем перед игрой 🎞 <small class="muted">(все темы игры и тема финала вперемешку медленно проплывают по экранам — ведущий их объявляет)</small></span><input type="checkbox" data-set="parade" ${settings.parade ? 'checked' : ''}></label>
+      <label class="set-row"><span>Секретных вопросов за раунд 🤫 <small class="muted">(случайные клетки: кто откроет — не глядя отдаёт вопрос другой команде, очки только у отвечающих)</small></span><select class="input small" data-set="secret">${[0, 1, 2, 3].map((n) => opt(n, settings.secret, n || 'нет')).join('')}</select></label>
+      <label class="set-row"><span>Случайных модернизаторов за раунд <small class="muted">(клетки-сюрпризы, меняют счёт. Свои можно поставить на любую клетку в редакторе)</small></span><select class="input small" data-set="mods">${[0, 1, 2, 3, 4, 5].map((n) => opt(n, settings.mods, n || 'нет')).join('')}</select></label>
       <label class="set-row"><span>Мини-игры 🎮 <small class="muted">(иногда между вопросами — быстрая игра на телефонах за доп. очки)</small></span><select class="input small" data-set="mini" data-str>${opt('off', settings.mini, 'выкл')}${opt('rare', settings.mini, 'редко')}${opt('often', settings.mini, 'часто')}</select></label>
       <label class="set-row"><span>Игроки сами выбирают вопрос <small class="muted">(команда, чей ход, жмёт клетку у себя на телефоне. Выключи — и выбирать будет только ведущий)</small></span><input type="checkbox" data-set="phonePick" ${settings.phonePick ? 'checked' : ''}></label>
       <label class="set-row"><span>Вопросы-ставки <small class="muted">(случайные клетки, где можно поставить свои очки)</small></span><input type="checkbox" data-set="dd" ${settings.dd ? 'checked' : ''}></label>
@@ -1592,6 +1653,7 @@ export async function startPlay(root, boardId) {
         ...(usesPhones() ? [{ name: 'players', label: '👥 Игроки — выгнать или перевести' }] : []),
         { name: 'addTeam', label: '+ Добавить команду' },
         ...(usesPhones() && S.phase === 'board' ? [{ name: 'mini', label: '🎮 Мини-игра прямо сейчас' }] : []),
+        ...(S.phase === 'board' ? [{ name: 'parade', label: '🎞 Показать темы игры ещё раз' }] : []),
         ...(['board', 'clue'].includes(S.phase) ? [{ name: 'endRound', label: 'Завершить раунд досрочно' }] : []),
         { name: 'exit', label: 'Выйти на главную' },
         { name: 'restart', label: 'Начать заново', cls: 'danger' },
@@ -1629,6 +1691,7 @@ export async function startPlay(root, boardId) {
         if (d.name === 'hostwin') return openHostWindow();
         if (d.name === 'remote') return showRemoteQR();
         if (d.name === 'mini') return act('mini');
+        if (d.name === 'parade') return act('parade');
         if (d.name === 'players') return playersDialog();
         if (d.name === 'lock') return act('lock');
         if (d.name === 'addTeam') {
@@ -1748,6 +1811,8 @@ export async function startPlay(root, boardId) {
     const c = S.clue;
     const now = Date.now();
     if (S.phase === 'mini' && S.mini && miniTick(now)) commit();
+    const p = S.parade;
+    if (S.phase === 'parade' && p && !p.done && p.paused == null && now - p.start >= p.dur) { p.done = true; commit(); }
     if (S.phase === 'clue' && c?.stage === 'open' && c.deadline && now >= c.deadline && !buzzTimer) {
       c.stage = 'answer';
       log({ k: 'none' });
@@ -1776,6 +1841,7 @@ export async function startPlay(root, boardId) {
       if (c?.stage === 'answer') return act('cont');
       if (c?.stage === 'mod' && c.mod.done) return act('modNext');
       if (S.phase === 'mini' && S.mini?.stage === 'done') return act('miniEnd');
+      if (S.phase === 'parade') return act(S.parade?.done ? 'paradeEnd' : 'paradePause');
       if (S.phase === 'roundEnd') return act('nextRound');
     }
     if (e.code === 'KeyN' && c) return act('reveal');
@@ -1803,6 +1869,7 @@ export async function startPlay(root, boardId) {
       S.mods ||= {};
       ensureTeams();
       if (S.phase === 'mini') { S.phase = S.mini?.after || 'board'; S.mini = null; }
+      if (S.phase === 'parade') { S.phase = S.parade?.after || 'board'; S.parade = null; }
       for (const p of S.players) p.online = false;
       if (S.clue) {
         clearBuzz();

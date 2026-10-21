@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, promptDlg, LOGO_SVG } from './util.js?v=1792358422380';
-import { VERSION } from './version.js?v=1792358422380';
-import { Client, LocalLink } from './net.js?v=1792358422380';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792358422380';
-import { MediaReceiver } from './mediasync.js?v=1792358422380';
-import { createScreen, prefs } from './gameui.js?v=1792358422380';
-import * as screamer from './screamer.js?v=1792358422380';
-import { MiniPlayer } from './minigames.js?v=1792358422380';
+import { $, esc, nl2br, fmt, signed, store, uid, toast, banner, dialog, confirmDlg, promptDlg, LOGO_SVG } from './util.js?v=1792619867792';
+import { VERSION } from './version.js?v=1792619867792';
+import { Client, LocalLink } from './net.js?v=1792619867792';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792619867792';
+import { MediaReceiver } from './mediasync.js?v=1792619867792';
+import { createScreen, prefs } from './gameui.js?v=1792619867792';
+import * as screamer from './screamer.js?v=1792619867792';
+import { MiniPlayer } from './minigames.js?v=1792619867792';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -282,6 +282,7 @@ function playerPanel(v) {
       : { kind: 'text', lbl: 'Скоро начнём', text: 'Ведущий собирает игроков.' };
   }
   if (v.phase === 'mini') return { kind: 'text', lbl: 'Мини-игра', text: 'Играем прямо на телефоне!' };
+  if (v.phase === 'parade') return { kind: 'text', lbl: 'Темы игры', text: v.view?.done ? 'Это все темы. Скоро первый вопрос!' : 'Ведущий объявляет темы — среди них и тема финала.' };
   if (v.phase === 'clue' && c) {
     if (c.mod) {
       const m = c.mod;
@@ -474,6 +475,8 @@ function renderRemote() {
       <div class="rm-q">${esc(c.q) || '<i class="muted">(медиа-вопрос)</i>'}</div>
       <div class="rm-a"><span class="muted small">Ответ</span><b>${esc(c.a || '—')}</b></div>
       <div class="rm-status">${esc(c.status)}</div></div>`;
+  } else if (v.parade) {
+    info = `<div class="rm-card"><b>Темы игры</b><div class="rm-status">${esc(v.parade.status)}</div><p class="muted small">${v.parade.list.map(esc).join(' · ')}</p></div>`;
   } else if (v.mini) {
     info = `<div class="rm-card"><b>${esc(v.mini.name)}</b><div class="rm-status">${esc(v.mini.status)}</div></div>`;
   } else if (v.fin) {
