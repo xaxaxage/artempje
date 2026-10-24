@@ -1,9 +1,9 @@
-import * as db from './db.js?v=1792855965883';
-import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1792855965883';
-import { newClue, newRound, filled, hasQ } from './board.js?v=1792855965883';
-import { MODS, MOD_IDS, RANDOM, modIcon, modName } from './mods.js?v=1792855965883';
-import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1792855965883';
-import * as screamer from './screamer.js?v=1792855965883';
+import * as db from './db.js?v=1792859542530';
+import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1792859542530';
+import { newClue, newRound, filled, hasQ } from './board.js?v=1792859542530';
+import { MODS, MOD_IDS, RANDOM, modIcon, modName } from './mods.js?v=1792859542530';
+import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1792859542530';
+import * as screamer from './screamer.js?v=1792859542530';
 
 export async function renderEditor(root, id) {
   const board = await db.getBoard(id);

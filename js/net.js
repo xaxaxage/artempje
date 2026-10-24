@@ -105,6 +105,14 @@ export class Host {
 // no network, works in both modes, and nothing of it ends up on the shared screen.
 export const hostChannelName = (key) => 'plyukh-host-' + key;
 
+// Pairs an extra remote with the room.
+export const AUX_TAG = 2047006618;
+export function auxTag(s) {
+  let h = 0x811c9dc5;
+  for (const c of 'artempje/' + s) h = Math.imul(h ^ c.charCodeAt(0), 0x01000193);
+  return h >>> 0;
+}
+
 export class LocalLink {
   constructor(key, { onOpen, onData, onStatus }) {
     Object.assign(this, { key, onOpen, onData, onStatus });

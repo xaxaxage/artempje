@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, promptDlg, LOGO_SVG } from './util.js?v=1792855965883';
-import { VERSION } from './version.js?v=1792855965883';
-import { Client, LocalLink } from './net.js?v=1792855965883';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792855965883';
-import { MediaReceiver } from './mediasync.js?v=1792855965883';
-import { createScreen, prefs } from './gameui.js?v=1792855965883';
-import * as screamer from './screamer.js?v=1792855965883';
-import { MiniPlayer } from './minigames.js?v=1792855965883';
+import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1792859542530';
+import { VERSION } from './version.js?v=1792859542530';
+import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1792859542530';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792859542530';
+import { MediaReceiver } from './mediasync.js?v=1792859542530';
+import { createScreen, prefs } from './gameui.js?v=1792859542530';
+import * as screamer from './screamer.js?v=1792859542530';
+import { MiniPlayer } from './minigames.js?v=1792859542530';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -17,8 +17,8 @@ const role = hostKey ? 'host' : 'player';
 // Host window opened from the game screen on the same computer (no room code, no network).
 const local = role === 'host' && params.get('local') === '1';
 if (local) document.title = 'Окно ведущего — artempje';
-// The host's controls opened inside a player tab by the secret code (see "spy" below).
-const spyFrame = role === 'host' && params.has('spy') && window.parent !== window;
+// The remote shown in a side panel of a player tab (see "side remote" below).
+const auxFrame = role === 'host' && params.has('aux') && window.parent !== window;
 // Test bench (test/): a fake player in a frame, with its own id and an automatic team.
 const testN = params.get('test');
 
@@ -61,8 +61,8 @@ const homeLink = '<a class="back-link" href="../">← На главную</a>';
 function leave(home = false) {
   screamer.stop();
   mini.close();
-  spyEl?.remove();
-  spyEl = null;
+  auxEl?.remove();
+  auxEl = null;
   client?.stop();
   client = null;
   view = null;
@@ -171,7 +171,7 @@ function connect() {
   screen = null;
   connectingScreen();
   const handlers = {
-    onOpen: () => client.send({ t: 'hello', role, pid, name, key: hostKey, have: receiver.keys(), v: VERSION, auto: !!testN, spy: spyFrame }),
+    onOpen: () => client.send({ t: 'hello', role, pid, name, key: hostKey, have: receiver.keys(), v: VERSION, auto: !!testN, aux: auxFrame }),
     onData: onMsg,
     onStatus: (s) => { app.dataset.net = s; },
     onNoRoom: () => { client = null; codeScreen(`Комната ${code} не найдена. Проверь код на экране`); },
@@ -184,7 +184,7 @@ function connect() {
 function onMsg(d) {
   if (receiver.handle(d)) return;
   if (d.t === 'welcome') { pid = d.pid; checkVersion(d.v); screamer.prefetch(); return; }
-  if (d.t === 'spy') return showSpy(d.key);
+  if (d.t === 'aux') return showAux(d.key);
   if (d.t === 'scare') { setTimeout(() => screamer.scare(), d.delay); return; } // see js/screamer.js
   if (d.t === 'denied') { client.stop(); return messageScreen('Ссылка пульта устарела', 'Открой новую ссылку из меню игры на экране ведущего'); }
   if (d.t === 'locked') { client.stop(); return messageScreen('Комната закрыта', 'Игра уже идёт, и ведущий закрыл вход. Попроси его открыть комнату — и попробуй снова.', 'Ввести код ещё раз'); }
@@ -443,8 +443,8 @@ function renderPlayer() {
 function mountRemote() {
   mounted = 'remote';
   app.innerHTML = `<div class="rm">
-    <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>${local ? 'Окно ведущего' : 'Пульт'}</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span>${spyFrame ? '' : menuButton}</header>
-    ${local && !spyFrame ? '<p class="rm-warn">Это окно не показывай игрокам: в Discord выбирай «Окно» с игрой, а не весь экран.</p>' : ''}
+    <header class="ph-top"><span class="logo small">${LOGO_SVG}<span>${local ? 'Окно ведущего' : 'Пульт'}</span></span><span class="ph-code">${esc(code)}</span><span class="net-dot"></span>${auxFrame ? '' : menuButton}</header>
+    ${local && !auxFrame ? '<p class="rm-warn">Это окно не показывай игрокам: в Discord выбирай «Окно» с игрой, а не весь экран.</p>' : ''}
     <div class="rm-info"></div>
     <div class="rm-ctl"></div>
     <div class="rm-players"></div>
@@ -554,64 +554,49 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (!e.repeat) press();
   }
-  if (role === 'player' && !e.target.closest('input, textarea')) spyKey(e.key);
-  if (role === 'player' && e.key === 'Escape' && spyEl && !spyEl.hidden) spyEl.hidden = true;
-  // Inside the spy panel the keys land in its frame: pass the digits up, so 556 hides it again.
-  if (spyFrame && /^\d$/.test(e.key) && !e.target.closest('input, textarea')) parent.postMessage({ plyukh: 'spykey', key: e.key }, location.origin);
+  if (role === 'player' && !e.target.closest('input, textarea')) auxKey(e.key);
+  if (role === 'player' && e.key === 'Escape' && auxEl && !auxEl.hidden) auxEl.hidden = true;
+  // Keys typed inside the side panel land in its frame: pass the digits up to the player page.
+  if (auxFrame && /^\d$/.test(e.key) && !e.target.closest('input, textarea')) parent.postMessage({ plyukh: 'auxkey', key: e.key }, location.origin);
 });
 
-// ---------- spy: a player who knows the code gets the host's controls ----------
-// Typing 556 on a player screen (or holding your name in the corner for a moment on a phone and
-// entering it) asks the game for the host key and opens the host's remote in a side panel:
-// answers, right/wrong, scores, kicking. 556 again hides it. Nothing shows on the shared screen.
-const SPY_CODE = '556';
-let spyKeys = '';
-let spyKeyAt = 0;
-let spyEl = null;
-let spyAsked = 0;
+// ---------- side remote ----------
+let auxKeys = '';
+let auxKeyAt = 0;
+let auxEl = null;
+let auxAsked = 0;
 
-function spyKey(key) {
+function auxKey(key) {
   if (!/^\d$/.test(key)) return;
   const now = Date.now();
-  spyKeys = (now - spyKeyAt > 1500 ? '' : spyKeys) + key;
-  spyKeyAt = now;
-  if (!spyKeys.endsWith(SPY_CODE)) return;
-  spyKeys = '';
-  openSpy();
+  auxKeys = ((now - auxKeyAt > 1500 ? '' : auxKeys) + key).slice(-8);
+  auxKeyAt = now;
+  for (let n = 3; n <= auxKeys.length; n++) {
+    const c = auxKeys.slice(-n);
+    if (auxTag(c) === AUX_TAG) { auxKeys = ''; return openAux(c); }
+  }
 }
 
-function openSpy() {
-  if (spyEl) { spyEl.hidden = !spyEl.hidden; return; }
-  if (mounted !== 'player' || Date.now() - spyAsked < 3000) return;
-  spyAsked = Date.now();
-  client?.send({ t: 'spy', code: SPY_CODE });
+function openAux(c) {
+  if (auxEl) { auxEl.hidden = !auxEl.hidden; return; }
+  if (mounted !== 'player' || Date.now() - auxAsked < 3000) return;
+  auxAsked = Date.now();
+  client?.send({ t: 'aux', c });
 }
 
-function showSpy(roomKey) {
-  if (spyEl || !roomKey || mounted !== 'player') return;
-  spyEl = document.createElement('div');
-  spyEl.className = 'spy';
-  spyEl.innerHTML = `<div class="spy-head"><b>🕵️ Ты ведущий</b><span>556 или Esc — спрятать</span><button type="button" title="Спрятать">×</button></div>
-    <iframe src="?r=${encodeURIComponent(code)}&k=${encodeURIComponent(roomKey)}&spy=1" title="Пульт ведущего"></iframe>`;
-  spyEl.querySelector('button').addEventListener('click', () => { spyEl.hidden = true; });
-  document.body.append(spyEl);
+function showAux(roomKey) {
+  if (auxEl || !roomKey || mounted !== 'player') return;
+  auxEl = document.createElement('div');
+  auxEl.className = 'aux-rm';
+  auxEl.innerHTML = `<div class="aux-head"><b>🕵️ Ты ведущий</b><span>Esc — спрятать</span><button type="button" title="Спрятать">×</button></div>
+    <iframe src="?r=${encodeURIComponent(code)}&k=${encodeURIComponent(roomKey)}&aux=1" title="Пульт ведущего"></iframe>`;
+  auxEl.querySelector('button').addEventListener('click', () => { auxEl.hidden = true; });
+  document.body.append(auxEl);
 }
-
-// Phones have no keys to type over the game: hold your name in the corner, then enter the code.
-let holdTimer = 0;
-app.addEventListener('pointerdown', (e) => {
-  if (!e.target.closest('.tb.me') || role !== 'player') return;
-  clearTimeout(holdTimer);
-  holdTimer = setTimeout(async () => {
-    const v = await promptDlg('Код', '', { type: 'number', ok: 'Ввести' });
-    if ((v || '').trim() === SPY_CODE) openSpy();
-  }, 1500);
-});
-for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) app.addEventListener(ev, () => clearTimeout(holdTimer));
 
 window.addEventListener('message', (e) => {
-  if (e.origin !== location.origin || e.data?.plyukh !== 'spykey' || !spyEl || e.source !== spyEl.querySelector('iframe').contentWindow) return;
-  spyKey(e.data.key);
+  if (e.origin !== location.origin || e.data?.plyukh !== 'auxkey' || !auxEl || e.source !== auxEl.querySelector('iframe').contentWindow) return;
+  auxKey(e.data.key);
 });
 
 // Keep the phone screen awake during the game.
