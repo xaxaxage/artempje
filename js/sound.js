@@ -1,6 +1,7 @@
 // Tiny WebAudio synth: no sound files to host.
 let ctx;
-export const sound = { on: true };
+// `vol` is this device's «Звуки игры» slider (0–1).
+export const sound = { on: true, vol: 1 };
 
 function ac() {
   if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -9,6 +10,8 @@ function ac() {
 }
 
 function tone(freq, at, dur, { type = 'sine', vol = 0.16, slide = 0 } = {}) {
+  vol *= sound.vol;
+  if (vol < 0.001) return;
   const c = ac();
   const t = c.currentTime + at;
   const o = c.createOscillator();

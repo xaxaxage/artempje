@@ -1,22 +1,22 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1792619867792';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792619867792';
-import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792619867792';
-import { mediaEl, kindOf } from './media.js?v=1792619867792';
-import { play as sfx, sound, unlock } from './sound.js?v=1792619867792';
-import { Host, errText, hostChannelName } from './net.js?v=1792619867792';
-import { setHTML } from './controls.js?v=1792619867792';
-import { saveGame } from './history.js?v=1792619867792';
-import { MediaSender, describe } from './mediasync.js?v=1792619867792';
-import { VERSION } from './version.js?v=1792619867792';
-import { createScreen } from './gameui.js?v=1792619867792';
-import * as screamer from './screamer.js?v=1792619867792';
-import { MODS, modHead, resolveMod } from './mods.js?v=1792619867792';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792619867792';
+import * as db from './db.js?v=1792848738154';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792848738154';
+import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792848738154';
+import { mediaEl, kindOf } from './media.js?v=1792848738154';
+import { play as sfx, sound, unlock } from './sound.js?v=1792848738154';
+import { Host, errText, hostChannelName } from './net.js?v=1792848738154';
+import { setHTML } from './controls.js?v=1792848738154';
+import { saveGame } from './history.js?v=1792848738154';
+import { MediaSender, describe } from './mediasync.js?v=1792848738154';
+import { VERSION } from './version.js?v=1792848738154';
+import { createScreen } from './gameui.js?v=1792848738154';
+import * as screamer from './screamer.js?v=1792848738154';
+import { MODS, modHead, resolveMod } from './mods.js?v=1792848738154';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792848738154';
 
 const SETTINGS_KEY = 'plyukh-settings';
-const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 1, parade: true };
+const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 0, parade: true };
 const BUZZ_WINDOW_MS = 220;
 // Older versions kept these counts as words.
 const COUNT_WORDS = { off: 0, one: 1, two: 2, few: 1, many: 3 };
@@ -429,7 +429,8 @@ export async function startPlay(root, boardId) {
       log({ k: 'pick', r: S.round, c, q, value: S.clue.value, dd, picker: S.picker, ...(turns() ? { turn: S.turn } : {}) });
       if (modId) {
         const skip = !cl.mod && modId === 'random' ? ['cat'] : [];
-        S.clue.mod = { kind: resolveMod(modId, S.teams.length, hasQ(cl), skip), team: who, target: null, done: false, changes: [], note: '' };
+        // auto: the game put it here (settings), not the author in the editor; the host is told which.
+        S.clue.mod = { auto: !cl.mod, kind: resolveMod(modId, S.teams.length, hasQ(cl), skip), team: who, target: null, done: false, changes: [], note: '' };
         S.clue.stage = 'mod';
         sfx('dd');
         if (!MODS[S.clue.mod.kind].target) applyMod();
@@ -1385,6 +1386,38 @@ export async function startPlay(root, boardId) {
     return [];
   }
 
+  // Tells the host where a modifier came from, so one that "appeared by itself" can be switched off.
+  function modOrigin(m) {
+    if (!m.auto) return 'Поставлен на эту клетку в редакторе доски.';
+    return m.kind === 'cat' && settings.secret
+      ? `Клетку выбрала игра сама: в ⚙ включено «Секретных вопросов за раунд: ${settings.secret}».`
+      : `Клетку выбрала игра сама: в ⚙ включено «Случайных модернизаторов за раунд: ${settings.mods}».`;
+  }
+
+  // Everything the game adds on its own, shown in the lobby before the start.
+  function surprises() {
+    const out = [];
+    if (settings.secret) out.push(`🤫 секретных вопросов — ${settings.secret} за раунд`);
+    if (settings.mods) out.push(`⚡ случайных модернизаторов — ${settings.mods} за раунд`);
+    let own = 0;
+    for (const r of board.rounds) for (const c of r.categories) own += c.clues.filter((cl) => cl.mod).length;
+    if (own) out.push(`⚡ модернизаторов из редактора — ${own}`);
+    if (settings.dd) out.push('★ вопросы-ставки');
+    if (usesPhones() && settings.mini !== 'off') out.push(`🎮 мини-игры (${settings.mini === 'often' ? 'часто' : 'редко'})`);
+    if (usesPhones() && settings.scare !== 'off') out.push('👻 скример');
+    return out;
+  }
+  async function settingsDialog() {
+    await dialog({
+      title: 'Настройки игры',
+      cls: 'wide',
+      html: `<div class="settings-card">${settingsHTML()}</div>`,
+      onMount: (w) => bindSettings(w),
+      buttons: [{ label: 'Готово', value: true, cls: 'primary' }],
+    });
+    commit();
+  }
+
   // The host's side panel: correct answer plus the buttons that run the game.
   function hostPanel() {
     const c = S.clue;
@@ -1409,7 +1442,8 @@ export async function startPlay(root, boardId) {
     }
     if (S.phase === 'clue' && c) {
       const cl = clueAt(c);
-      return { kind: 'host', answer: c.stage === 'answer' || !hasQ(cl) ? null : cl.a, hidden, status: c.stage === 'answer' ? statusText() : '', controls: controls() };
+      const status = c.stage === 'answer' ? statusText() : c.stage === 'mod' ? modOrigin(c.mod) : '';
+      return { kind: 'host', answer: c.stage === 'answer' || !hasQ(cl) ? null : cl.a, hidden, status, controls: controls() };
     }
     if (S.phase === 'final' && S.fin) {
       const f = S.fin;
@@ -1543,6 +1577,7 @@ export async function startPlay(root, boardId) {
           <div class="team-mode"><button class="btn small" data-am="buzz">⚡ Кто быстрее</button><button class="btn small" data-am="turns">🔁 По очереди</button></div>
           <p class="muted small am-hint"></p>
           <div class="lobby-teams"></div>
+          <div class="lobby-sur"></div>
           <p class="muted small lobby-tip" hidden>Нажми на имя игрока, чтобы перевести его в другую команду или выгнать.</p>
           <div class="lobby-free"></div>
           <form class="add-player">
@@ -1563,6 +1598,7 @@ export async function startPlay(root, boardId) {
       });
       root.querySelectorAll('[data-tm]').forEach((b) => b.addEventListener('click', () => setTeamMode(b.dataset.tm)));
       root.querySelectorAll('[data-am]').forEach((b) => b.addEventListener('click', () => { settings.answer = b.dataset.am; saveSettings(); commit(); }));
+      root.querySelector('.lobby-sur').addEventListener('click', (e) => { if (e.target.closest('[data-sur]')) settingsDialog(); });
       $('[data-start]', root).addEventListener('click', () => {
         unlock();
         if (!S.teams.length) return toast('Добавь хотя бы одну команду');
@@ -1603,6 +1639,8 @@ export async function startPlay(root, boardId) {
         </div>
         ${solo() && members(t.id)[0] ? `<button type="button" class="icon-btn" data-pmenu="${esc(members(t.id)[0].id)}" title="Выгнать игрока">×</button>` : `<button type="button" class="icon-btn" data-tdel="${esc(t.id)}" title="Убрать команду">×</button>`}
       </div>`).join('') : `<div class="lp empty muted">${usesPhones() ? 'Пока никого… ждём игроков' : 'Добавь команды ниже'}</div>`);
+    const sur = surprises();
+    setHTML($('.lobby-sur', root), `<b>Сюрпризы в игре:</b> ${sur.length ? sur.map(esc).join(' · ') : 'никаких, обычная «Своя игра»'} <button type="button" class="link-btn" data-sur>Настроить</button>`);
     $('.lobby-tip', root).hidden = !S.players.length;
     if (solo()) $('.lobby-tip', root).textContent = 'Чтобы выгнать игрока, нажми × рядом с ним.';
     else $('.lobby-tip', root).textContent = 'Нажми на имя игрока, чтобы перевести его в другую команду или выгнать.';

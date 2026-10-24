@@ -1,7 +1,7 @@
 // Mini-games: now and then, between questions, everyone plays something tiny on their phone for
 // bonus points. The host picks the game and collects the results; every phone measures itself
 // (a reaction time is counted on the phone, so a slow connection doesn't lose).
-import { esc, plural } from './util.js?v=1792619867792';
+import { esc, plural } from './util.js?v=1792848738154';
 
 export const GAMES = {
   reaction: { icon: '⚡', name: 'Реакция', rule: 'Жди зелёный экран и сразу жми. Нажмёшь раньше — вылетишь.', time: 10000 },

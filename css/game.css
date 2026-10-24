@@ -360,3 +360,8 @@
   .g-par-item { font-size: 24px; }
   .g-par-all span { font-size: 14px; padding: 7px 11px; }
 }
+
+/* ---------- volume sliders (⚙) ---------- */
+.g-vol { width: 100%; accent-color: var(--g-accent); margin: 2px 0 0; }
+.g-vol-v { color: var(--g-ink); font-variant-numeric: tabular-nums; }
+.g-vol-note { color: var(--g-muted); font-size: 11px; }

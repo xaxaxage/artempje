@@ -18,6 +18,9 @@ export function plural(n, one, few, many) {
   return many;
 }
 
+// How loud question audio and video play on this device (⚙ → «Громкость вопросов»), 0–1.
+export const mediaVolume = () => { const v = store.get('plyukh-ui', {}).vol; return typeof v === 'number' ? v : 0.7; };
+
 export const store = {
   get(k, d = null) {
     try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; }

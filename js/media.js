@@ -2,8 +2,8 @@
 //   { kind: 'file', id, mime }      blob stored in IndexedDB
 //   { kind: 'url', url, mime }      link to an image/audio/video on the web
 //   { kind: 'youtube', vid, start } YouTube video
-import * as db from './db.js?v=1792619867792';
-import { uid } from './util.js?v=1792619867792';
+import * as db from './db.js?v=1792848738154';
+import { uid, mediaVolume } from './util.js?v=1792848738154';
 
 const urlCache = new Map();
 
@@ -194,6 +194,7 @@ export async function mediaEl(ref, { autoplay = false, thumb = false } = {}) {
     a.src = src;
     a.controls = true;
     a.preload = 'auto';
+    a.volume = mediaVolume();
     if (autoplay) a.autoplay = true;
     d.append(a);
     return d;
@@ -204,6 +205,7 @@ export async function mediaEl(ref, { autoplay = false, thumb = false } = {}) {
   v.controls = true;
   v.playsInline = true;
   v.preload = thumb ? 'metadata' : 'auto';
+  v.volume = mediaVolume();
   if (autoplay) v.autoplay = true;
   return v;
 }

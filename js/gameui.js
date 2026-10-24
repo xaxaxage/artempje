@@ -1,7 +1,8 @@
 // The game screen shared by the host and the players: three layouts, soft themes and the ⚙ popover.
 // Pages build a plain "model" of what to show; this module turns it into DOM and reports clicks back.
-import { esc, nl2br, fmt, store } from './util.js?v=1792619867792';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792619867792';
+import { esc, nl2br, fmt, store } from './util.js?v=1792848738154';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792848738154';
+import { sound } from './sound.js?v=1792848738154';
 
 export const THEMES = [['sand', 'Песок', '#5b8a85'], ['studio', 'Студия', '#3a4a85'], ['night', 'Ночь', '#a99cf0'], ['mint', 'Мята', '#4fae8f'], ['lilac', 'Лаванда', '#8c7cc2']];
 export const LAYOUTS = [['a', 'Колонка справа'], ['b', 'Счёт внизу'], ['c', 'Телешоу']];
@@ -9,8 +10,10 @@ export const BUZZ = [['round', 'Круглая кнопка'], ['bar', 'Поло
 
 // Look and feel is personal: every device keeps its own choice.
 const PREFS_KEY = 'plyukh-ui';
-export const prefs = { theme: 'sand', layout: 'a', buzz: 'round', ...store.get(PREFS_KEY, {}) };
+// vol: question audio and video, sfx: the game's own beeps (host only). Both 0–1.
+export const prefs = { theme: 'sand', layout: 'a', buzz: 'round', vol: 0.7, sfx: 0.7, ...store.get(PREFS_KEY, {}) };
 const savePrefs = () => store.set(PREFS_KEY, prefs);
+sound.vol = prefs.sfx;
 
 // Question text shrinks as it gets longer and when it shares the space with a picture.
 function textScale(t, media) {
@@ -101,6 +104,20 @@ export function createScreen(parent, opts) {
     if (t.closest('.q-media.zoom') && !t.closest('video, audio, iframe')) { t.closest('.q-media').classList.remove('zoom'); return; }
     if (popOpen && !t.closest('.g-pop')) { popOpen = false; drawPop(); }
   });
+  // Volume sliders in the ⚙ popover act while being dragged.
+  el.addEventListener('input', (e) => {
+    const r = e.target.closest('[data-volume]');
+    if (!r) return;
+    prefs[r.dataset.volume] = +r.value / 100;
+    savePrefs();
+    sound.vol = prefs.sfx;
+    applyVolume();
+    const out = r.closest('.g-opt')?.querySelector('.g-vol-v');
+    if (out) out.textContent = `${r.value}%`;
+  });
+  function applyVolume(root = el) {
+    for (const m of root.querySelectorAll('audio, video')) m.volume = prefs.vol;
+  }
   el.addEventListener('submit', (e) => {
     const f = e.target.closest('form.p-form');
     if (!f) return;
@@ -215,7 +232,7 @@ export function createScreen(parent, opts) {
       mEl._mk = v.mediaKey;
       mEl.classList.remove('zoom');
       mEl.innerHTML = '';
-      if (v.media) opts.mediaNode(v.media, !!v.autoplay).then((n) => { if (n && mEl._mk === v.mediaKey) mEl.append(n); });
+      if (v.media) opts.mediaNode(v.media, !!v.autoplay).then((n) => { if (n && mEl._mk === v.mediaKey) { mEl.append(n); applyVolume(mEl); } });
     }
     setHTML($('.q-extra'), extraHTML(v));
   }
@@ -366,10 +383,12 @@ export function createScreen(parent, opts) {
     $('.g-tools-side .gear')?.classList.toggle('on', popOpen);
     if (!popOpen) { pop.innerHTML = ''; return; }
     const seg = (key, label, list) => `<div class="g-opt"><span>${label}</span><div class="g-seg">${list.map(([v, l, sw]) => `<button type="button" data-pref="${key}" data-v="${v}" class="${prefs[key] === v ? 'on' : ''}">${sw ? `<span class="g-sw" style="background:${sw}"></span>` : ''}${l}</button>`).join('')}</div></div>`;
+    const slider = (key, label, note = '') => `<div class="g-opt"><span>${label} · <b class="g-vol-v">${Math.round(prefs[key] * 100)}%</b></span><input type="range" class="g-vol" min="0" max="100" step="5" value="${Math.round(prefs[key] * 100)}" data-volume="${key}" aria-label="${label}">${note ? `<small class="g-vol-note">${note}</small>` : ''}</div>`;
     const extra = opts.settings?.();
     const links = opts.links?.() || [];
     pop.innerHTML = `<h4>Настройки <button type="button" data-popclose title="Закрыть">×</button></h4>
-      <div class="sub">Вид на этом устройстве</div>
+      <div class="sub">Это устройство</div>
+      ${slider('vol', '🔊 Громкость вопросов', 'видео и музыка в вопросах; у YouTube — свой ползунок в плеере')}${role === 'host' ? slider('sfx', '🔔 Звуки игры') : ''}
       ${seg('theme', 'Тема', THEMES)}${seg('layout', 'Раскладка', LAYOUTS)}${role === 'player' ? seg('buzz', 'Как жать', BUZZ) : ''}
       ${extra ? `<div class="divider"></div><div class="sub">Игра</div>${extra.html}` : ''}
       ${links.length ? `<div class="divider"></div><div class="g-links">${links.map((l) => `<button type="button" class="btn ${l.cls || ''}" data-link="${esc(l.name)}">${esc(l.label)}</button>`).join('')}</div>` : ''}`;
