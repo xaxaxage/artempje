@@ -1,9 +1,9 @@
-import { renderHome } from './home.js?v=1792859542530';
-import { renderEditor } from './editor.js?v=1792859542530';
-import { startPlay } from './game.js?v=1792859542530';
-import { renderHistory } from './historyview.js?v=1792859542530';
-import { esc, siteUpdatedBanner } from './util.js?v=1792859542530';
-import { VERSION } from './version.js?v=1792859542530';
+import { renderHome } from './home.js?v=1792859704857';
+import { renderEditor } from './editor.js?v=1792859704857';
+import { startPlay } from './game.js?v=1792859704857';
+import { renderHistory } from './historyview.js?v=1792859704857';
+import { esc, siteUpdatedBanner } from './util.js?v=1792859704857';
+import { VERSION } from './version.js?v=1792859704857';
 
 const host = document.getElementById('app');
 let cleanup = null;

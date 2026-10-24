@@ -106,7 +106,7 @@ export class Host {
 export const hostChannelName = (key) => 'plyukh-host-' + key;
 
 // Pairs an extra remote with the room.
-export const AUX_TAG = 2047006618;
+export const AUX_TAG = 1299434835;
 export function auxTag(s) {
   let h = 0x811c9dc5;
   for (const c of 'artempje/' + s) h = Math.imul(h ^ c.charCodeAt(0), 0x01000193);
