@@ -202,6 +202,12 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .pl-row:hover { border-color: var(--orange); }
 .pl-row .muted { flex: 1; min-width: 0; }
 .pl-go { font-size: 1.2rem; color: var(--muted); }
+.pl-row.ban { cursor: default; }
+.pl-row.ban:hover { border-color: var(--line); }
+.pl-sub { margin-top: 8px; font-size: .8rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.lobby-ban { margin: 6px 0 0; }
+.lobby-ban:empty { display: none; }
+.rm-sub { margin-top: 8px; }
 .lobby-tip { margin: 4px 0 0; }
 .lobby-sur { margin: 12px 0 4px; padding: 10px 12px; border-radius: 10px; background: var(--field); border: 1px solid var(--line); font-size: .9rem; line-height: 1.45; text-align: left; }
 

@@ -1,19 +1,19 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1792852434343';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792852434343';
-import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792852434343';
-import { mediaEl, kindOf } from './media.js?v=1792852434343';
-import { play as sfx, sound, unlock } from './sound.js?v=1792852434343';
-import { Host, errText, hostChannelName } from './net.js?v=1792852434343';
-import { setHTML } from './controls.js?v=1792852434343';
-import { saveGame } from './history.js?v=1792852434343';
-import { MediaSender, describe } from './mediasync.js?v=1792852434343';
-import { VERSION } from './version.js?v=1792852434343';
-import { createScreen } from './gameui.js?v=1792852434343';
-import * as screamer from './screamer.js?v=1792852434343';
-import { MODS, modHead, resolveMod } from './mods.js?v=1792852434343';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792852434343';
+import * as db from './db.js?v=1792855965883';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792855965883';
+import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792855965883';
+import { mediaEl, kindOf } from './media.js?v=1792855965883';
+import { play as sfx, sound, unlock } from './sound.js?v=1792855965883';
+import { Host, errText, hostChannelName } from './net.js?v=1792855965883';
+import { setHTML } from './controls.js?v=1792855965883';
+import { saveGame } from './history.js?v=1792855965883';
+import { MediaSender, describe } from './mediasync.js?v=1792855965883';
+import { VERSION } from './version.js?v=1792855965883';
+import { createScreen } from './gameui.js?v=1792855965883';
+import * as screamer from './screamer.js?v=1792855965883';
+import { MODS, modHead, resolveMod } from './mods.js?v=1792855965883';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792855965883';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 0, parade: true, paradeSpeed: 1 };
@@ -134,9 +134,9 @@ export async function startPlay(root, boardId) {
     if (!prev) return toast('Нечего отменять');
     const online = Object.fromEntries(S.players.map((p) => [p.id, p.online]));
     // Undo is about the game, not about who may come in: the lock and the kicked list stay as they are.
-    const { locked, kicked, banned } = S;
+    const { locked, kicked, banned, bannedInfo } = S;
     S = JSON.parse(prev);
-    Object.assign(S, { locked, kicked, banned });
+    Object.assign(S, { locked, kicked, banned, bannedInfo });
     S.players = S.players.filter((p) => !kicked.includes(p.id));
     for (const p of S.players) p.online = !!online[p.id];
     clearBuzz();
@@ -651,6 +651,9 @@ export async function startPlay(root, boardId) {
     kick({ pid, ban }) {
       kick(pid, !!ban);
     },
+    unban({ pid }) {
+      if (S.banned?.includes(pid)) unban(pid);
+    },
     // A closed room lets nobody new in; whoever is already playing can still reconnect.
     lock({ on } = {}) {
       S.locked = on ?? !S.locked;
@@ -832,11 +835,29 @@ export async function startPlay(root, boardId) {
     const conn = conns.get(pid);
     if (conn) { net.send(conn, { t: 'kicked', ban }); setTimeout(() => { try { conn.close(); } catch {} }, 300); conns.delete(pid); }
     if (!S.kicked.includes(pid)) S.kicked.push(pid);
-    if (ban) (S.banned ||= []).push(pid);
+    if (ban) {
+      (S.banned ||= []).push(pid);
+      // In «каждый сам за себя» the player's row goes away with them: keep its score for an unban.
+      const t = team(p.teamId);
+      (S.bannedInfo ||= {})[pid] = { name: p.name, teamId: p.teamId, ...(solo() && t ? { color: t.color, score: t.score } : {}) };
+    }
     S.players = S.players.filter((x) => x.id !== pid);
     if (solo() && !members(p.teamId).length) removeTeam(p.teamId);
     toast(ban ? `${p.name} выгнан(а) насовсем` : `${p.name} выгнан(а)`);
   }
+
+  // Lets a banned player back in. They come back as they were — same name, same team if it's still
+  // there — so even a closed room lets them in: it only stops new players.
+  function unban(pid) {
+    const info = S.bannedInfo?.[pid];
+    S.banned = (S.banned || []).filter((x) => x !== pid);
+    S.kicked = S.kicked.filter((x) => x !== pid);
+    if (S.bannedInfo) delete S.bannedInfo[pid];
+    if (info && solo() && info.color && !team(info.teamId)) S.teams.push({ id: info.teamId, name: info.name, color: info.color, score: info.score || 0 });
+    if (info && !player(pid)) S.players.push({ id: pid, name: info.name, teamId: team(info.teamId) ? info.teamId : null, phone: true, online: false });
+    toast(`${info?.name || 'Игрок'} разбанен(а) — может вернуться`);
+  }
+  const bannedList = () => (S.banned || []).map((id) => ({ id, name: S.bannedInfo?.[id]?.name || 'Игрок' }));
 
   function removeTeam(tid) {
     S.teams = S.teams.filter((t) => t.id !== tid);
@@ -1084,6 +1105,7 @@ export async function startPlay(root, boardId) {
       teams: S.teams.map((t) => ({ id: t.id, name: t.name, color: t.color, score: t.score, online: canPlay(t), members: members(t.id).map((p) => p.name), picker: S.picker === t.id })),
       controls: controls(),
       players: S.players.map((p) => ({ id: p.id, name: p.name, team: solo() ? '' : team(p.teamId)?.name || '', color: team(p.teamId)?.color || '#999', online: !p.phone || p.online })),
+      banned: bannedList(),
       canUndo: hist.length > 0,
       locked: !!S.locked,
     };
@@ -1603,6 +1625,7 @@ export async function startPlay(root, boardId) {
           <p class="muted small am-hint"></p>
           <div class="lobby-teams"></div>
           <div class="lobby-sur"></div>
+          <div class="lobby-ban muted small"></div>
           <p class="muted small lobby-tip" hidden>Нажми на имя игрока, чтобы перевести его в другую команду или выгнать.</p>
           <div class="lobby-free"></div>
           <form class="add-player">
@@ -1624,6 +1647,7 @@ export async function startPlay(root, boardId) {
       root.querySelectorAll('[data-tm]').forEach((b) => b.addEventListener('click', () => setTeamMode(b.dataset.tm)));
       root.querySelectorAll('[data-am]').forEach((b) => b.addEventListener('click', () => { settings.answer = b.dataset.am; saveSettings(); commit(); }));
       root.querySelector('.lobby-sur').addEventListener('click', (e) => { if (e.target.closest('[data-sur]')) settingsDialog(); });
+      root.querySelector('.lobby-ban').addEventListener('click', (e) => { const u = e.target.closest('[data-unban]'); if (u) act('unban', { pid: u.dataset.unban }); });
       $('[data-start]', root).addEventListener('click', () => {
         unlock();
         if (!S.teams.length) return toast('Добавь хотя бы одну команду');
@@ -1666,6 +1690,8 @@ export async function startPlay(root, boardId) {
       </div>`).join('') : `<div class="lp empty muted">${usesPhones() ? 'Пока никого… ждём игроков' : 'Добавь команды ниже'}</div>`);
     const sur = surprises();
     setHTML($('.lobby-sur', root), `<b>Сюрпризы в игре:</b> ${sur.length ? sur.map(esc).join(' · ') : 'никаких, обычная «Своя игра»'} <button type="button" class="link-btn" data-sur>Настроить</button>`);
+    const banned = bannedList();
+    setHTML($('.lobby-ban', root), banned.length ? `Выгнаны насовсем: ${banned.map((b) => `${esc(b.name)} <button type="button" class="link-btn" data-unban="${esc(b.id)}">разбанить</button>`).join(', ')}` : '');
     $('.lobby-tip', root).hidden = !S.players.length;
     if (solo()) $('.lobby-tip', root).textContent = 'Чтобы выгнать игрока, нажми × рядом с ним.';
     else $('.lobby-tip', root).textContent = 'Нажми на имя игрока, чтобы перевести его в другую команду или выгнать.';
@@ -1713,7 +1739,7 @@ export async function startPlay(root, boardId) {
         { name: 'hostwin', label: '👁 Окно ведущего (для трансляции)' },
         ...(usesPhones() ? [{ name: 'remote', label: '📱 Пульт на телефоне (QR)' }] : []),
         ...(usesPhones() ? [{ name: 'lock', label: S.locked ? '🔓 Открыть комнату' : '🔒 Закрыть комнату — новые не зайдут' }] : []),
-        ...(usesPhones() ? [{ name: 'players', label: '👥 Игроки — выгнать или перевести' }] : []),
+        ...(usesPhones() ? [{ name: 'players', label: `👥 Игроки — выгнать или перевести${S.banned?.length ? ` · разбанить (${S.banned.length})` : ''}` }] : []),
         { name: 'addTeam', label: '+ Добавить команду' },
         ...(usesPhones() && S.phase === 'board' ? [{ name: 'mini', label: '🎮 Мини-игра прямо сейчас' }] : []),
         ...(S.phase === 'board' ? [{ name: 'parade', label: '🎞 Показать темы игры ещё раз' }] : []),
@@ -1851,20 +1877,28 @@ export async function startPlay(root, boardId) {
 
   // Everyone in the room, to move or kick them during the game (⚙ → «Игроки»).
   async function playersDialog() {
-    if (!S.players.length) return toast('Пока никто не зашёл');
+    const banned = bannedList();
+    if (!S.players.length && !banned.length) return toast('Пока никто не зашёл');
     const row = (p) => {
       const t = team(p.teamId);
       const st = p.phone ? (p.online ? 'на связи' : 'не на связи') : 'без телефона';
       return `<button type="button" class="pl-row" data-p="${esc(p.id)}"><span class="dot ${!p.phone || p.online ? 'on' : 'off'}"></span><b>${esc(p.name)}</b><span class="muted small">${solo() || !t ? '' : `${esc(t.name)} · `}${st}</span><span class="pl-go">›</span></button>`;
     };
-    const pid = await dialog({
+    const banRow = (b) => `<div class="pl-row ban"><span class="dot off"></span><b>${esc(b.name)}</b><span class="muted small">выгнан(а) насовсем</span><button type="button" class="btn small" data-unban="${esc(b.id)}">Разбанить</button></div>`;
+    const pick = await dialog({
       title: `Игроки (${S.players.length})`,
-      html: `<div class="pl-list">${S.players.map(row).join('')}</div>`,
+      html: `<div class="pl-list">${S.players.map(row).join('')}${banned.length ? `<div class="pl-sub">Выгнаны насовсем</div>${banned.map(banRow).join('')}` : ''}</div>`,
       cls: 'menu-dlg',
       buttons: [{ label: 'Закрыть', value: null, cls: 'ghost' }],
-      onMount: (w, close) => w.querySelector('.pl-list').addEventListener('click', (e) => { const b = e.target.closest('[data-p]'); if (b) close(b.dataset.p); }),
+      onMount: (w, close) => w.querySelector('.pl-list').addEventListener('click', (e) => {
+        const u = e.target.closest('[data-unban]');
+        if (u) return close(`u:${u.dataset.unban}`);
+        const b = e.target.closest('[data-p]');
+        if (b) close(b.dataset.p);
+      }),
     });
-    if (pid) playerMenu(pid);
+    if (pick?.startsWith('u:')) act('unban', { pid: pick.slice(2) });
+    else if (pick) playerMenu(pick);
   }
 
   // ---------- timers ----------

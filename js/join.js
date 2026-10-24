@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, promptDlg, LOGO_SVG } from './util.js?v=1792852434343';
-import { VERSION } from './version.js?v=1792852434343';
-import { Client, LocalLink } from './net.js?v=1792852434343';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792852434343';
-import { MediaReceiver } from './mediasync.js?v=1792852434343';
-import { createScreen, prefs } from './gameui.js?v=1792852434343';
-import * as screamer from './screamer.js?v=1792852434343';
-import { MiniPlayer } from './minigames.js?v=1792852434343';
+import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, promptDlg, LOGO_SVG } from './util.js?v=1792855965883';
+import { VERSION } from './version.js?v=1792855965883';
+import { Client, LocalLink } from './net.js?v=1792855965883';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1792855965883';
+import { MediaReceiver } from './mediasync.js?v=1792855965883';
+import { createScreen, prefs } from './gameui.js?v=1792855965883';
+import * as screamer from './screamer.js?v=1792855965883';
+import { MiniPlayer } from './minigames.js?v=1792855965883';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -144,13 +144,16 @@ function nameScreen() {
   $('[data-other]', app).addEventListener('click', () => leave());
 }
 
-function messageScreen(title, text, retry = '') {
+// `again`: offer to knock on the same room once more (a banned player the host may let back in).
+function messageScreen(title, text, retry = '', again = false) {
   mounted = false;
   mini.close();
   screen?.destroy();
   screen = null;
   app.innerHTML = `<div class="ph-center">${homeLink}${logo}<h1>${esc(title)}</h1><p class="muted">${esc(text)}</p>
-    ${retry ? `<button class="btn primary big wide" data-retry>${esc(retry)}</button>` : ''}</div>`;
+    ${again ? '<button class="btn primary big wide" data-again>Попробовать снова</button>' : ''}
+    ${retry ? `<button class="${again ? 'link-btn' : 'btn primary big wide'}" data-retry>${esc(retry)}</button>` : ''}</div>`;
+  $('[data-again]', app)?.addEventListener('click', () => connect());
   $('[data-retry]', app)?.addEventListener('click', () => { code = ''; history.replaceState(null, '', '?'); codeScreen(); });
 }
 
@@ -187,7 +190,7 @@ function onMsg(d) {
   if (d.t === 'locked') { client.stop(); return messageScreen('Комната закрыта', 'Игра уже идёт, и ведущий закрыл вход. Попроси его открыть комнату — и попробуй снова.', 'Ввести код ещё раз'); }
   if (d.t === 'kicked') {
     client.stop();
-    if (d.ban) return messageScreen('Тебя выгнали', 'Ведущий выгнал тебя из этой игры и не пускает обратно.', 'Ввести другой код');
+    if (d.ban) return messageScreen('Тебя выгнали', 'Ведущий выгнал тебя из этой игры и не пускает обратно. Если он тебя разбанит — нажми «Попробовать снова».', 'Ввести другой код', true);
     // Forget this room's id: coming back with the code makes a new player.
     store.del('plyukh-pid-' + code);
     return messageScreen('Тебя выгнали', 'Ведущий убрал тебя из игры. Вернуться можно по коду комнаты.', 'Войти снова');
@@ -489,12 +492,15 @@ function renderRemote() {
   setHTML($('.rm-info', app), info);
   setHTML($('.rm-ctl', app), controlsHTML(v.controls || []));
   const players = v.players || [];
-  setHTML($('.rm-kick', app), players.length ? `<div class="rm-card"><div class="muted small">Игроки</div>${players.map((p) => `
+  const banned = v.banned || [];
+  const bannedHTML = banned.length ? `<div class="muted small rm-sub">Выгнаны насовсем</div>${banned.map((b) => `
+    <div class="rm-p"><span class="dot off"></span><span class="rm-pn muted">${esc(b.name)}</span><button class="btn small" data-unban="${esc(b.id)}">Разбанить</button></div>`).join('')}` : '';
+  setHTML($('.rm-kick', app), players.length || banned.length ? `<div class="rm-card"><div class="muted small">Игроки</div>${players.map((p) => `
     <div class="rm-p">
       <span class="dot" style="background:${esc(p.color)}"></span>
       <span class="rm-pn ${p.online ? '' : 'muted'}">${esc(p.name)}${p.team ? ` <small class="muted">${esc(p.team)}</small>` : ''}${p.online ? '' : ' <small>(не на связи)</small>'}</span>
       <button class="btn small" data-kick="${esc(p.id)}" data-name="${esc(p.name)}">Выгнать</button>
-    </div>`).join('')}</div>` : '');
+    </div>`).join('')}${bannedHTML}</div>` : '');
   setHTML($('.rm-players', app), `<div class="rm-card"><div class="muted small">Команды (± по 100)</div>${(v.teams || []).map((t) => `
     <div class="rm-p ${t.picker ? 'picker' : ''}">
       <span class="dot" style="background:${esc(t.color)}"></span>
@@ -525,6 +531,8 @@ app.addEventListener('click', (e) => {
   if (e.target.closest('[data-menu]')) openMenu();
   const k = e.target.closest('[data-kick]');
   if (k && role === 'host') kickFromRemote(k.dataset.kick, k.dataset.name);
+  const u = e.target.closest('[data-unban]');
+  if (u && role === 'host' && !client?.send({ t: 'act', a: 'unban', args: { pid: u.dataset.unban } })) toast('Нет связи с экраном');
 });
 
 async function kickFromRemote(pid, who) {
