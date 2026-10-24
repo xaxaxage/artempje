@@ -1,5 +1,5 @@
-import { uid } from './util.js?v=1792848738154';
-import { isMod } from './mods.js?v=1792848738154';
+import { uid } from './util.js?v=1792852434343';
+import { isMod } from './mods.js?v=1792852434343';
 
 export const ROUND1_VALUES = [200, 400, 600, 800, 1000];
 

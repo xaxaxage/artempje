@@ -1,22 +1,22 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1792848738154';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792848738154';
-import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792848738154';
-import { mediaEl, kindOf } from './media.js?v=1792848738154';
-import { play as sfx, sound, unlock } from './sound.js?v=1792848738154';
-import { Host, errText, hostChannelName } from './net.js?v=1792848738154';
-import { setHTML } from './controls.js?v=1792848738154';
-import { saveGame } from './history.js?v=1792848738154';
-import { MediaSender, describe } from './mediasync.js?v=1792848738154';
-import { VERSION } from './version.js?v=1792848738154';
-import { createScreen } from './gameui.js?v=1792848738154';
-import * as screamer from './screamer.js?v=1792848738154';
-import { MODS, modHead, resolveMod } from './mods.js?v=1792848738154';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792848738154';
+import * as db from './db.js?v=1792852434343';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792852434343';
+import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792852434343';
+import { mediaEl, kindOf } from './media.js?v=1792852434343';
+import { play as sfx, sound, unlock } from './sound.js?v=1792852434343';
+import { Host, errText, hostChannelName } from './net.js?v=1792852434343';
+import { setHTML } from './controls.js?v=1792852434343';
+import { saveGame } from './history.js?v=1792852434343';
+import { MediaSender, describe } from './mediasync.js?v=1792852434343';
+import { VERSION } from './version.js?v=1792852434343';
+import { createScreen } from './gameui.js?v=1792852434343';
+import * as screamer from './screamer.js?v=1792852434343';
+import { MODS, modHead, resolveMod } from './mods.js?v=1792852434343';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792852434343';
 
 const SETTINGS_KEY = 'plyukh-settings';
-const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 0, parade: true };
+const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 0, parade: true, paradeSpeed: 1 };
 const BUZZ_WINDOW_MS = 220;
 // Older versions kept these counts as words.
 const COUNT_WORDS = { off: 0, one: 1, two: 2, few: 1, many: 3 };
@@ -297,10 +297,25 @@ export async function startPlay(root, boardId) {
     if (finalReady(board) && board.final.category?.trim()) names.push(board.final.category.trim());
     return shuffle([...new Set(names)]);
   }
+  // About 2.6 s per theme at 1×; the host's speed slider divides it.
+  const paradeDur = (n) => Math.max(10000, n * 2600) / (settings.paradeSpeed || 1);
+  // A new speed keeps the roll where it is: same share of the way done, just faster or slower from here.
+  function setParadeSpeed(v) {
+    settings.paradeSpeed = clamp(+v || 1, 0.5, 2.5);
+    saveSettings();
+    const p = S?.parade;
+    if (S?.phase !== 'parade' || !p || p.done) return;
+    const share = paradeElapsed(p) / p.dur;
+    p.dur = paradeDur(p.list.length);
+    const at = share * p.dur;
+    if (p.paused != null) p.paused = at;
+    else p.start = Date.now() - at;
+    p.seq++;
+  }
   function startParade(after) {
     const list = gameThemes();
     if (!list.length) return;
-    S.parade = { list, dur: Math.max(10000, list.length * 2600), start: Date.now(), paused: null, seq: 0, done: false, after };
+    S.parade = { list, dur: paradeDur(list.length), start: Date.now(), paused: null, seq: 0, done: false, after };
     S.phase = 'parade';
   }
   const paradeElapsed = (p) => p.paused ?? Date.now() - p.start;
@@ -651,10 +666,13 @@ export async function startPlay(root, boardId) {
       else { p.start = Date.now() - p.paused; p.paused = null; }
       p.seq++;
     },
+    paradeSpeed({ value }) {
+      setParadeSpeed(value);
+    },
     paradeAgain() {
       const p = S.parade;
       if (S.phase !== 'parade') return;
-      Object.assign(p, { start: Date.now(), paused: null, done: false });
+      Object.assign(p, { start: Date.now(), paused: null, done: false, dur: paradeDur(p.list.length) });
       p.seq++;
     },
     paradeEnd() {
@@ -1374,8 +1392,9 @@ export async function startPlay(root, boardId) {
     if (S.phase === 'parade' && S.parade) {
       const p = S.parade;
       const first = !S.log?.some((e) => e.k === 'pick');
-      if (p.done) return [{ items: [{ label: first ? 'Начать игру →' : 'К доске →', act: 'paradeEnd', cls: 'primary big', key: 'Пробел' }, { label: '↺ Ещё раз', act: 'paradeAgain', cls: 'ghost' }] }];
-      return [{ items: [{ label: p.paused != null ? '▶ Дальше' : '⏸ Пауза', act: 'paradePause', key: 'Пробел' }, { label: 'Пропустить →', act: 'paradeEnd', cls: 'ghost' }] }];
+      const speed = { items: [{ type: 'range', label: 'Скорость', act: 'paradeSpeed', min: 0.5, max: 2.5, step: 0.25, value: settings.paradeSpeed, unit: '×' }] };
+      if (p.done) return [{ items: [{ label: first ? 'Начать игру →' : 'К доске →', act: 'paradeEnd', cls: 'primary big', key: 'Пробел' }, { label: '↺ Ещё раз', act: 'paradeAgain', cls: 'ghost' }] }, speed];
+      return [{ items: [{ label: p.paused != null ? '▶ Дальше' : '⏸ Пауза', act: 'paradePause', key: 'Пробел' }, { label: 'Пропустить →', act: 'paradeEnd', cls: 'ghost' }] }, speed];
     }
     if (S.phase === 'mini' && S.mini) {
       return S.mini.stage === 'done'
@@ -1494,6 +1513,7 @@ export async function startPlay(root, boardId) {
       <label class="set-row"><span>Кто отвечает <small class="muted">(«по очереди» — команды отвечают по кругу, без кнопок; ответили верно — выбираете вопрос следующей команде)</small></span><select class="input small" data-set="answer" data-str>${opt('buzz', settings.answer, 'кто быстрее')}${opt('turns', settings.answer, 'по очереди')}</select></label>
       <label class="set-row"><span>Минус за ошибку «по очереди» <small class="muted">(иначе неверный ответ просто 0)</small></span><input type="checkbox" data-set="turnMinus" ${settings.turnMinus ? 'checked' : ''}></label>
       <label class="set-row"><span>Парад тем перед игрой 🎞 <small class="muted">(все темы игры и тема финала вперемешку медленно проплывают по экранам — ведущий их объявляет)</small></span><input type="checkbox" data-set="parade" ${settings.parade ? 'checked' : ''}></label>
+      <label class="set-row"><span>Скорость парада тем · <b class="set-v">${String(settings.paradeSpeed).replace('.', ',')}×</b> <small class="muted">(её можно менять и прямо во время парада)</small></span><input type="range" class="set-range" min="0.5" max="2.5" step="0.25" data-set="paradeSpeed" value="${settings.paradeSpeed}"></label>
       <label class="set-row"><span>Секретных вопросов за раунд 🤫 <small class="muted">(случайные клетки: кто откроет — не глядя отдаёт вопрос другой команде, очки только у отвечающих)</small></span><select class="input small" data-set="secret">${[0, 1, 2, 3].map((n) => opt(n, settings.secret, n || 'нет')).join('')}</select></label>
       <label class="set-row"><span>Случайных модернизаторов за раунд <small class="muted">(клетки-сюрпризы, меняют счёт. Свои можно поставить на любую клетку в редакторе)</small></span><select class="input small" data-set="mods">${[0, 1, 2, 3, 4, 5].map((n) => opt(n, settings.mods, n || 'нет')).join('')}</select></label>
       <label class="set-row"><span>Мини-игры 🎮 <small class="muted">(иногда между вопросами — быстрая игра на телефонах за доп. очки)</small></span><select class="input small" data-set="mini" data-str>${opt('off', settings.mini, 'выкл')}${opt('rare', settings.mini, 'редко')}${opt('often', settings.mini, 'часто')}</select></label>
@@ -1509,6 +1529,10 @@ export async function startPlay(root, boardId) {
       <label class="set-row"><span>Скример 👻 <small class="muted">(иногда, пока читают вопрос, выскакивает на телефоне у одного случайного игрока. И в редакторе досок тоже)</small></span><select class="input small" data-set="scare" data-str>${opt('off', settings.scare, 'выкл')}${opt('rare', settings.scare, 'редко')}${opt('often', settings.scare, 'часто')}</select></label>`;
   }
   function bindSettings(el) {
+    el.querySelectorAll('input[type=range][data-set]').forEach((i) => i.addEventListener('input', () => {
+      const v = i.closest('.set-row')?.querySelector('.set-v');
+      if (v) v.textContent = `${i.value.replace('.', ',')}×`;
+    }));
     el.querySelectorAll('[data-set]').forEach((i) => i.addEventListener('change', () => {
       const k = i.dataset.set;
       settings[k] = i.type === 'checkbox' ? i.checked : 'bool' in i.dataset ? i.value === 'true' : 'str' in i.dataset ? i.value : +i.value;
@@ -1516,6 +1540,7 @@ export async function startPlay(root, boardId) {
       saveSettings();
       if (S && k === 'answer' && turns() && !team(S.turn)) S.turn = S.picker;
       if (S && (k === 'mods' || k === 'secret') && ['board', 'clue'].includes(S.phase)) placeMods();
+      if (k === 'paradeSpeed') setParadeSpeed(settings.paradeSpeed);
       if (S && S.phase !== 'setup') commit();
     }));
   }

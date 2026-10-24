@@ -365,3 +365,8 @@
 .g-vol { width: 100%; accent-color: var(--g-accent); margin: 2px 0 0; }
 .g-vol-v { color: var(--g-ink); font-variant-numeric: tabular-nums; }
 .g-vol-note { color: var(--g-muted); font-size: 11px; }
+
+/* sliders among the host's buttons (parade speed) */
+.gs .ctl-range { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 180px; font-size: 13px; font-weight: 600; color: var(--g-muted); }
+.gs .ctl-range b { color: var(--g-ink); font-variant-numeric: tabular-nums; }
+.gs .ctl-range input { width: 100%; accent-color: var(--g-accent); }

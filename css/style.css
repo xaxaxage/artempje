@@ -1043,6 +1043,9 @@ body.phone { overscroll-behavior: none; }
 .rm-ctl .btn.big { width: 100%; }
 .rm-ctl .ctl-wager { width: 100%; }
 .rm-ctl .ctl-wager .input { flex: 1; width: auto; }
+.ctl-range { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 180px; font-weight: 600; }
+.ctl-range input, .set-range { width: 100%; accent-color: var(--orange); }
+.set-range { max-width: 160px; }
 .rm-p { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .rm-p:last-child { border-bottom: none; }
 .rm-pn { flex: 1; font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
