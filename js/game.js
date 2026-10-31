@@ -1,19 +1,19 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1792859704857';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1792859704857';
-import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1792859704857';
-import { mediaEl, kindOf } from './media.js?v=1792859704857';
-import { play as sfx, sound, unlock } from './sound.js?v=1792859704857';
-import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1792859704857';
-import { setHTML } from './controls.js?v=1792859704857';
-import { saveGame } from './history.js?v=1792859704857';
-import { MediaSender, describe } from './mediasync.js?v=1792859704857';
-import { VERSION } from './version.js?v=1792859704857';
-import { createScreen } from './gameui.js?v=1792859704857';
-import * as screamer from './screamer.js?v=1792859704857';
-import { MODS, modHead, resolveMod } from './mods.js?v=1792859704857';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1792859704857';
+import * as db from './db.js?v=1793451814523';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1793451814523';
+import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1793451814523';
+import { mediaEl, kindOf } from './media.js?v=1793451814523';
+import { play as sfx, sound, unlock } from './sound.js?v=1793451814523';
+import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1793451814523';
+import { setHTML } from './controls.js?v=1793451814523';
+import { saveGame } from './history.js?v=1793451814523';
+import { MediaSender, describe } from './mediasync.js?v=1793451814523';
+import { VERSION } from './version.js?v=1793451814523';
+import { createScreen } from './gameui.js?v=1793451814523';
+import * as screamer from './screamer.js?v=1793451814523';
+import { MODS, BOMB, GIFT, ROBIN, modHead, resolveMod } from './mods.js?v=1793451814523';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1793451814523';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 0, parade: true, paradeSpeed: 1 };
@@ -63,7 +63,7 @@ export async function startPlay(root, boardId) {
   const members = (tid) => S.players.filter((p) => p.teamId === tid);
   const keyOf = (r, c, q) => `${r}:${c}:${q}`;
   const clueAt = (c) => R().categories[c.c].clues[c.q];
-  const worth = () => (S.clue.dd ? S.clue.wager || 0 : S.clue.value * (S.clue.mult || 1));
+  const worth = () => (S.clue.dd ? S.clue.wager || 0 : S.clue.value);
   const firstRound = () => board.rounds.findIndex(roundPlayable);
   const standings = () => [...S.teams].sort((a, b) => b.score - a.score);
   const saveSettings = () => store.set(SETTINGS_KEY, settings);
@@ -327,7 +327,6 @@ export async function startPlay(root, boardId) {
     const m = c.mod;
     const me = team(m.team);
     const other = team(target);
-    const v = c.value;
     const before = scoreMap();
     let note = '';
     switch (m.kind) {
@@ -339,30 +338,16 @@ export async function startPlay(root, boardId) {
         if (me && other) [me.score, other.score] = [other.score, me.score];
         if (me && other && me.score === other.score) note = 'Очков было поровну — ничего не изменилось';
         break;
-      case 'steal':
-        if (me && other) { other.score -= v; me.score += v; }
-        break;
-      case 'gift': if (me) me.score += v; break;
-      case 'bomb': if (me) me.score -= v; break;
+      case 'gift': if (me) me.score += GIFT; break;
+      case 'bomb': if (me) me.score -= BOMB; break;
       case 'robin': {
         const st = standings();
         const top = st[0];
         const low = st[st.length - 1];
-        if (top && low && top.score > low.score) { top.score -= v; low.score += v; }
+        if (top && low && top.score > low.score) { top.score -= ROBIN; low.score += ROBIN; }
         else note = 'У всех поровну — Робину некого грабить';
         break;
       }
-      case 'shuffle': {
-        const vals = S.teams.map((t) => t.score);
-        let mixed = shuffle([...vals]);
-        for (let i = 0; i < 8 && new Set(vals).size > 1 && mixed.every((x, j) => x === vals[j]); i++) mixed = shuffle([...vals]);
-        S.teams.forEach((t, i) => { t.score = mixed[i]; });
-        if (new Set(vals).size < 2) note = 'У всех поровну — перемешивать нечего';
-        break;
-      }
-      case 'double':
-        c.mult = 2;
-        break;
       case 'cat':
         c.only = target;
         note = `Вопрос достаётся команде ${other?.name || '…'} — отвечают только они`;
@@ -907,7 +892,7 @@ export async function startPlay(root, boardId) {
       const which = ref && ref === cl.aMedia ? 'a' : 'q';
       const v = {
         v: 'clue', key: c.key, cat,
-        label: c.dd ? (c.wager != null ? `ставка ${fmt(c.wager)}` : 'вопрос-ставка') : c.only ? `🤫 ${fmt(worth())}` : c.mult > 1 ? `×2 · ${fmt(worth())}` : fmt(c.value),
+        label: c.dd ? (c.wager != null ? `ставка ${fmt(c.wager)}` : 'вопрос-ставка') : c.only ? `🤫 ${fmt(worth())}` : fmt(c.value),
         text: host || settings.phoneText ? cl.q : 'Вопрос — на экране ведущего',
         media: ref ? (host ? ref : describe(ref)) : null, mediaKey: ref ? `${c.key}:${which}` : '',
         autoplay: settings.mediaSync === 'all', stage: c.stage,

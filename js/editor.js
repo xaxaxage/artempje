@@ -1,9 +1,9 @@
-import * as db from './db.js?v=1792859704857';
-import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1792859704857';
-import { newClue, newRound, filled, hasQ } from './board.js?v=1792859704857';
-import { MODS, MOD_IDS, RANDOM, modIcon, modName } from './mods.js?v=1792859704857';
-import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1792859704857';
-import * as screamer from './screamer.js?v=1792859704857';
+import * as db from './db.js?v=1793451814523';
+import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1793451814523';
+import { newClue, newRound, filled, hasQ } from './board.js?v=1793451814523';
+import { MODS, MOD_IDS, RANDOM, modIcon, modName, chancesText } from './mods.js?v=1793451814523';
+import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1793451814523';
+import * as screamer from './screamer.js?v=1793451814523';
 
 export async function renderEditor(root, id) {
   const board = await db.getBoard(id);
@@ -347,7 +347,7 @@ export async function renderEditor(root, id) {
         const mod = $('[data-f=mod]', w);
         const modDesc = () => {
           const id = clue().mod;
-          $('.ce-mod-desc', w).textContent = !id ? '' : MODS[id] ? MODS[id].desc(r.values[cur.qi]) : 'Каждый раз выпадет случайный модернизатор.';
+          $('.ce-mod-desc', w).textContent = !id ? '' : MOD_IDS.includes(id) ? MODS[id].desc(r.values[cur.qi]) : `Каждый раз выпадает случайный: ${chancesText()}.`;
           $('.ce-mod', w).classList.toggle('on', !!id);
         };
         const clue = () => board.rounds[tab].categories[cur.ci].clues[cur.qi];
@@ -362,7 +362,8 @@ export async function renderEditor(root, id) {
           $('.ce-where', w).innerHTML = `<b>${esc(cat)}</b> · ${fmt(r.values[cur.qi])}`;
           q.value = cl.q;
           a.value = cl.a;
-          mod.value = cl.mod || '';
+          // A modifier that was taken out of the game plays as a random one now.
+          mod.value = !cl.mod ? '' : MOD_IDS.includes(cl.mod) ? cl.mod : 'random';
           modDesc();
           zones.media = mediaZone($('[data-slot=media]', w), () => clue().media, (v) => { clue().media = v; }, () => { touch(); refreshCell(); });
           zones.aMedia = mediaZone($('[data-slot=aMedia]', w), () => clue().aMedia, (v) => { clue().aMedia = v; }, () => { touch(); refreshCell(); });

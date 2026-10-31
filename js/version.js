@@ -1,2 +1,2 @@
 // Set by tools/bump-version.mjs on every deploy; host and phones compare it to catch stale cached pages.
-export const VERSION = '1792859704857';
+export const VERSION = '1793451814523';
