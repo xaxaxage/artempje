@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1793451814523';
-import { VERSION } from './version.js?v=1793451814523';
-import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1793451814523';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793451814523';
-import { MediaReceiver } from './mediasync.js?v=1793451814523';
-import { createScreen, prefs } from './gameui.js?v=1793451814523';
-import * as screamer from './screamer.js?v=1793451814523';
-import { MiniPlayer } from './minigames.js?v=1793451814523';
+import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1793550522680';
+import { VERSION } from './version.js?v=1793550522680';
+import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1793550522680';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793550522680';
+import { MediaReceiver } from './mediasync.js?v=1793550522680';
+import { createScreen, prefs } from './gameui.js?v=1793550522680';
+import * as screamer from './screamer.js?v=1793550522680';
+import { MiniPlayer } from './minigames.js?v=1793550522680';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -566,15 +566,17 @@ let auxKeyAt = 0;
 let auxEl = null;
 let auxAsked = 0;
 
-function auxKey(key) {
+async function auxKey(key) {
   if (!/^\d$/.test(key)) return;
   const now = Date.now();
-  auxKeys = ((now - auxKeyAt > 1500 ? '' : auxKeys) + key).slice(-8);
+  auxKeys = ((now - auxKeyAt > 3000 ? '' : auxKeys) + key).slice(-32);
   auxKeyAt = now;
-  for (let n = 3; n <= auxKeys.length; n++) {
-    const c = auxKeys.slice(-n);
-    if (auxTag(c) === AUX_TAG) { auxKeys = ''; return openAux(c); }
-  }
+  const typed = auxKeys;
+  const tags = await Promise.all(Array.from({ length: Math.max(0, typed.length - 2) }, (_, i) => auxTag(typed.slice(i))));
+  const i = tags.indexOf(AUX_TAG);
+  if (i < 0 || auxKeys !== typed) return;
+  auxKeys = '';
+  openAux(typed.slice(i));
 }
 
 function openAux(c) {

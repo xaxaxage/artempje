@@ -106,11 +106,11 @@ export class Host {
 export const hostChannelName = (key) => 'plyukh-host-' + key;
 
 // Pairs an extra remote with the room.
-export const AUX_TAG = 1299434835;
-export function auxTag(s) {
-  let h = 0x811c9dc5;
-  for (const c of 'artempje/' + s) h = Math.imul(h ^ c.charCodeAt(0), 0x01000193);
-  return h >>> 0;
+export const AUX_TAG = 'c62509939c02f38eda50c8af25e7c62d2a6322de3e379f0f24d8ce19d008005c';
+export async function auxTag(s) {
+  if (!crypto.subtle) return '';
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('artempje/' + s));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 export class LocalLink {
