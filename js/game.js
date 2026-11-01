@@ -1,19 +1,19 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1793550522680';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1793550522680';
-import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1793550522680';
-import { mediaEl, kindOf } from './media.js?v=1793550522680';
-import { play as sfx, sound, unlock } from './sound.js?v=1793550522680';
-import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1793550522680';
-import { setHTML } from './controls.js?v=1793550522680';
-import { saveGame } from './history.js?v=1793550522680';
-import { MediaSender, describe } from './mediasync.js?v=1793550522680';
-import { VERSION } from './version.js?v=1793550522680';
-import { createScreen } from './gameui.js?v=1793550522680';
-import * as screamer from './screamer.js?v=1793550522680';
-import { MODS, BOMB, GIFT, ROBIN, modHead, resolveMod } from './mods.js?v=1793550522680';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1793550522680';
+import * as db from './db.js?v=1793551077643';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1793551077643';
+import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1793551077643';
+import { mediaEl, kindOf } from './media.js?v=1793551077643';
+import { play as sfx, sound, unlock } from './sound.js?v=1793551077643';
+import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1793551077643';
+import { setHTML } from './controls.js?v=1793551077643';
+import { saveGame } from './history.js?v=1793551077643';
+import { MediaSender, describe } from './mediasync.js?v=1793551077643';
+import { VERSION } from './version.js?v=1793551077643';
+import { createScreen } from './gameui.js?v=1793551077643';
+import * as screamer from './screamer.js?v=1793551077643';
+import { MODS, BOMB, GIFT, ROBIN, modHead, resolveMod } from './mods.js?v=1793551077643';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1793551077643';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 0, parade: true, paradeSpeed: 1 };

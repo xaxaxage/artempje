@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1793550522680';
-import { VERSION } from './version.js?v=1793550522680';
-import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1793550522680';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793550522680';
-import { MediaReceiver } from './mediasync.js?v=1793550522680';
-import { createScreen, prefs } from './gameui.js?v=1793550522680';
-import * as screamer from './screamer.js?v=1793550522680';
-import { MiniPlayer } from './minigames.js?v=1793550522680';
+import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1793551077643';
+import { VERSION } from './version.js?v=1793551077643';
+import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1793551077643';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793551077643';
+import { MediaReceiver } from './mediasync.js?v=1793551077643';
+import { createScreen, prefs } from './gameui.js?v=1793551077643';
+import * as screamer from './screamer.js?v=1793551077643';
+import { MiniPlayer } from './minigames.js?v=1793551077643';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -554,13 +554,15 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (!e.repeat) press();
   }
-  if (role === 'player' && !e.target.closest('input, textarea')) auxKey(e.key);
+  if (role === 'player' && !e.target.closest('input, textarea')) auxKey(digitOf(e));
   if (role === 'player' && e.key === 'Escape' && auxEl && !auxEl.hidden) auxEl.hidden = true;
   // Keys typed inside the side panel land in its frame: pass the digits up to the player page.
-  if (auxFrame && /^\d$/.test(e.key) && !e.target.closest('input, textarea')) parent.postMessage({ plyukh: 'auxkey', key: e.key }, location.origin);
+  if (auxFrame && digitOf(e) && !e.target.closest('input, textarea')) parent.postMessage({ plyukh: 'auxkey', key: digitOf(e) }, location.origin);
 });
 
 // ---------- side remote ----------
+// A digit from the top row or the numpad (with Num Lock off the numpad sends arrows, but its codes stay).
+const digitOf = (e) => (/^(Digit|Numpad)\d$/.test(e.code) ? e.code.slice(-1) : /^\d$/.test(e.key) ? e.key : '');
 let auxKeys = '';
 let auxKeyAt = 0;
 let auxEl = null;
@@ -569,7 +571,7 @@ let auxAsked = 0;
 async function auxKey(key) {
   if (!/^\d$/.test(key)) return;
   const now = Date.now();
-  auxKeys = ((now - auxKeyAt > 3000 ? '' : auxKeys) + key).slice(-32);
+  auxKeys = ((now - auxKeyAt > 15000 ? '' : auxKeys) + key).slice(-32);
   auxKeyAt = now;
   const typed = auxKeys;
   const tags = await Promise.all(Array.from({ length: Math.max(0, typed.length - 2) }, (_, i) => auxTag(typed.slice(i))));
