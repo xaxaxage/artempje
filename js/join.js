@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1793551077643';
-import { VERSION } from './version.js?v=1793551077643';
-import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1793551077643';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793551077643';
-import { MediaReceiver } from './mediasync.js?v=1793551077643';
-import { createScreen, prefs } from './gameui.js?v=1793551077643';
-import * as screamer from './screamer.js?v=1793551077643';
-import { MiniPlayer } from './minigames.js?v=1793551077643';
+import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1793552895431';
+import { VERSION } from './version.js?v=1793552895431';
+import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1793552895431';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793552895431';
+import { MediaReceiver } from './mediasync.js?v=1793552895431';
+import { createScreen, prefs } from './gameui.js?v=1793552895431';
+import * as screamer from './screamer.js?v=1793552895431';
+import { MiniPlayer } from './minigames.js?v=1793552895431';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -501,17 +501,39 @@ function renderRemote() {
       <span class="rm-pn ${p.online ? '' : 'muted'}">${esc(p.name)}${p.team ? ` <small class="muted">${esc(p.team)}</small>` : ''}${p.online ? '' : ' <small>(не на связи)</small>'}</span>
       <button class="btn small" data-kick="${esc(p.id)}" data-name="${esc(p.name)}">Выгнать</button>
     </div>`).join('')}${bannedHTML}</div>` : '');
-  setHTML($('.rm-players', app), `<div class="rm-card"><div class="muted small">Команды (± по 100)</div>${(v.teams || []).map((t) => `
+  // While a score is being typed, leave the list alone so the field keeps its text and focus.
+  if (!$('.rm-players', app).contains(document.activeElement)) setHTML($('.rm-players', app), `<div class="rm-card"><div class="muted small">Команды: впиши очки и Enter, или +300 / −200 — прибавить или отнять</div>${(v.teams || []).map((t) => `
     <div class="rm-p ${t.picker ? 'picker' : ''}">
       <span class="dot" style="background:${esc(t.color)}"></span>
       <span class="rm-pn">${esc(t.name)}${t.picker ? ' <small>выбирает</small>' : ''}${t.members?.length ? `<br><small class="muted">${esc(t.members.join(', '))}</small>` : ''}</span>
-      <b class="${t.score < 0 ? 'neg' : ''}">${fmt(t.score)}</b>
+      <form class="rm-score" data-team="${esc(t.id)}"><input class="input ${t.score < 0 ? 'neg' : ''}" inputmode="numeric" enterkeyhint="done" autocomplete="off" value="${t.score}" aria-label="Очки: ${esc(t.name)}"></form>
       <button class="btn small" data-act="adj" data-args='${esc(JSON.stringify({ team: t.id, delta: -100 }))}'>−</button>
       <button class="btn small" data-act="adj" data-args='${esc(JSON.stringify({ team: t.id, delta: 100 }))}'>+</button>
     </div>`).join('')}</div>`);
   $('.rm-foot [data-act=undo]', app).disabled = !v.canUndo;
   $('.rm-foot [data-act=lock]', app).textContent = v.locked ? '🔓 Открыть комнату' : '🔒 Закрыть комнату';
 }
+
+// Typed scores: a plain number sets the score, +N or −N changes it by that much.
+app.addEventListener('submit', (e) => {
+  const f = e.target.closest('form.rm-score');
+  if (!f) return;
+  e.preventDefault();
+  const input = f.querySelector('input');
+  const raw = input.value.replace(/\s/g, '').replace(/[−–]/g, '-');
+  const n = Math.round(Number(raw));
+  if (!raw || !Number.isFinite(n)) return toast('Впиши число');
+  const msg = /^[+-]/.test(raw) ? { t: 'act', a: 'adj', args: { team: f.dataset.team, delta: n } } : { t: 'act', a: 'setScore', args: { team: f.dataset.team, value: n } };
+  if (!client?.send(msg)) toast('Нет связи с экраном');
+  input.blur();
+});
+app.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && e.target.closest('form.rm-score')) e.target.blur();
+});
+// Leaving a score field: show the current scores again.
+app.addEventListener('focusout', (e) => {
+  if (e.target.closest('form.rm-score')) setTimeout(() => { if (role === 'host' && view) renderRemote(); });
+});
 
 // ---------- shared ----------
 function render() {

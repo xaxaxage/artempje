@@ -1056,6 +1056,9 @@ body.phone { overscroll-behavior: none; }
 .rm-pn { flex: 1; font-weight: 650; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rm-pn small { color: var(--orange); font-weight: 800; text-transform: uppercase; font-size: .65rem; }
 .rm-p b { min-width: 3em; text-align: right; font-variant-numeric: tabular-nums; }
+.rm-score { margin: 0; }
+.rm-score .input { width: 5.5em; padding: .35em .5em; text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.rm-score .input.neg { color: var(--red); }
 .rm-foot { text-align: center; }
 .rm-warn { margin: 0; padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--yellow) 22%, var(--card)); border: 2px solid var(--yellow); font-size: .85rem; font-weight: 600; }
 

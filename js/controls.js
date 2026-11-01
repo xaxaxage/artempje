@@ -5,7 +5,7 @@
 //         { type: 'wager', label, act, args?, min, max, value? }
 //         { type: 'note', text }
 //         { type: 'range', label, act, args?, min, max, step, value, unit? } — sends { value } when let go
-import { esc } from './util.js?v=1793551077643';
+import { esc } from './util.js?v=1793552895431';
 
 function itemHTML(it) {
   const args = esc(JSON.stringify(it.args || {}));
