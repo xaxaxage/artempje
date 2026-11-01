@@ -896,6 +896,10 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .ed-cell.warn { border-color: var(--yellow); }
 .ed-cell.warn::after { content: 'нет ответа'; position: absolute; left: 10px; bottom: 6px; font-size: .68rem; font-weight: 700; color: var(--yellow); }
 .ed-cell.mod { background: var(--orange); box-shadow: 0 3px 0 var(--orange-dark); }
+.ce-flash { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0 2px; font-weight: 600; }
+.ce-flash[hidden] { display: none; }
+.ce-flash .input.tiny { width: 64px; }
+.ce-flash-note { flex-basis: 100%; font-weight: 400; }
 .ce-mod { margin-top: 6px; }
 .ce-mod select { max-width: 420px; }
 .ce-mod.on select { border-color: var(--orange); }

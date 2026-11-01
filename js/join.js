@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1793552895431';
-import { VERSION } from './version.js?v=1793552895431';
-import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1793552895431';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793552895431';
-import { MediaReceiver } from './mediasync.js?v=1793552895431';
-import { createScreen, prefs } from './gameui.js?v=1793552895431';
-import * as screamer from './screamer.js?v=1793552895431';
-import { MiniPlayer } from './minigames.js?v=1793552895431';
+import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1793557124832';
+import { VERSION } from './version.js?v=1793557124832';
+import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1793557124832';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793557124832';
+import { MediaReceiver } from './mediasync.js?v=1793557124832';
+import { createScreen, prefs } from './gameui.js?v=1793557124832';
+import * as screamer from './screamer.js?v=1793557124832';
+import { MiniPlayer } from './minigames.js?v=1793557124832';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -235,6 +235,7 @@ function buzzState(v) {
   const c = me.clue;
   if (v.phase === 'board') return { cls: 'bs-closed', big: 'Жди', small: v.view?.mine ? 'ваш выбор — нажми на клетку' : 'ждём вопрос' };
   if (v.phase !== 'clue' || !c) return { cls: 'bs-closed', big: 'Жди', small: '' };
+  if (c.stage === 'flash') return { cls: 'bs-closed', big: 'Жди', small: 'запоминай картинку' };
   if (c.stage === 'answer') {
     const r = c.result;
     if (r?.mine) return { cls: r.delta >= 0 ? 'bs-mine' : 'bs-bad', big: signed(r.delta), small: r.delta >= 0 ? 'верно!' : 'неверно' };
@@ -294,6 +295,7 @@ function playerPanel(v) {
       if (!m.done) return { kind: 'text', lbl, text: '{team} выбирают…', team: m.team };
       return { kind: 'text', lbl, text: m.mine ? 'Достался вашей команде!' : 'Достался команде {team}', team: m.team };
     }
+    if (c.stage === 'flash') return { kind: 'text', lbl: 'Запоминай!', text: 'Смотри на картинку: скоро она исчезнет и появится вопрос.' };
     if (c.single) return singlePanel(c);
     if (c.stage === 'ddIntro') {
       if (c.wagerReq) return { kind: 'form', form: { key: `dd:${v.view?.key}`, type: 'wager', title: 'Ставка вашей команды', min: c.wagerReq.min, max: c.wagerReq.max, value: '', label: 'Поставить', sub: `От ${fmt(c.wagerReq.min)} до ${fmt(c.wagerReq.max)}` } };

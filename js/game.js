@@ -1,19 +1,19 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1793552895431';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1793552895431';
-import { filled, hasQ, finalReady, roundPlayable } from './board.js?v=1793552895431';
-import { mediaEl, kindOf } from './media.js?v=1793552895431';
-import { play as sfx, sound, unlock } from './sound.js?v=1793552895431';
-import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1793552895431';
-import { setHTML } from './controls.js?v=1793552895431';
-import { saveGame } from './history.js?v=1793552895431';
-import { MediaSender, describe } from './mediasync.js?v=1793552895431';
-import { VERSION } from './version.js?v=1793552895431';
-import { createScreen } from './gameui.js?v=1793552895431';
-import * as screamer from './screamer.js?v=1793552895431';
-import { MODS, BOMB, GIFT, ROBIN, modHead, resolveMod } from './mods.js?v=1793552895431';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1793552895431';
+import * as db from './db.js?v=1793557124832';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1793557124832';
+import { filled, hasQ, finalReady, roundPlayable, FLASH_KINDS } from './board.js?v=1793557124832';
+import { mediaEl, kindOf } from './media.js?v=1793557124832';
+import { play as sfx, sound, unlock } from './sound.js?v=1793557124832';
+import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1793557124832';
+import { setHTML } from './controls.js?v=1793557124832';
+import { saveGame } from './history.js?v=1793557124832';
+import { MediaSender, describe } from './mediasync.js?v=1793557124832';
+import { VERSION } from './version.js?v=1793557124832';
+import { createScreen } from './gameui.js?v=1793557124832';
+import * as screamer from './screamer.js?v=1793557124832';
+import { MODS, BOMB, GIFT, ROBIN, modHead, resolveMod } from './mods.js?v=1793557124832';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1793557124832';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 0, parade: true, paradeSpeed: 1 };
@@ -242,6 +242,22 @@ export async function startPlay(root, boardId) {
     c.ansDeadline = settings.timer ? Date.now() + c.ansTotal : 0;
     c.ansBeeped = false;
   }
+  // A clue may first show its picture alone for a few seconds («Запоминайте!»), then hide it and show
+  // the text. The buttons and the answer timer wait until then; the picture comes back with the answer.
+  const flashSecs = (cl) => (cl?.flash > 0 && cl.media && FLASH_KINDS.includes(kindOf(cl.media)) ? cl.flash : 0);
+  function showQuestion() {
+    const c = S.clue;
+    const secs = flashSecs(clueAt(c));
+    if (!secs) return afterFlash();
+    c.stage = 'flash';
+    c.flashTotal = secs * 1000;
+    c.flashUntil = Date.now() + c.flashTotal;
+  }
+  function afterFlash() {
+    const c = S.clue;
+    if (c.dd) c.stage = 'reading';
+    else startQuestion();
+  }
   function nextTurn(tid) {
     const n = S.teams.length;
     const i = S.teams.findIndex((t) => t.id === tid);
@@ -437,7 +453,7 @@ export async function startPlay(root, boardId) {
       } else if (dd) {
         Object.assign(S.clue, { stage: 'ddIntro', ddTeam: who, wager: null });
         sfx('dd');
-      } else startQuestion();
+      } else showQuestion();
       maybeScare();
     },
     modTarget({ team: tid, random } = {}) {
@@ -453,7 +469,7 @@ export async function startPlay(root, boardId) {
     modNext() {
       const c = S.clue;
       if (c?.stage !== 'mod' || !c.mod.done) return;
-      if (hasQ(clueAt(c))) return startQuestion();
+      if (hasQ(clueAt(c))) return showQuestion();
       finishClue();
       maybeMini();
     },
@@ -467,8 +483,18 @@ export async function startPlay(root, boardId) {
       if (!t) return toast('Сначала выбери, кто отвечает');
       const { min, max } = ddRange(t);
       c.wager = clamp(Math.round(+amount || 0), min, max);
-      c.stage = 'reading';
       log({ k: 'dd', team: t.id, wager: c.wager });
+      showQuestion();
+    },
+    flashSkip() {
+      if (S.clue?.stage === 'flash') afterFlash();
+    },
+    reflash() {
+      const c = S.clue;
+      if (c && flashSecs(clueAt(c)) && (c.stage === 'reading' || (c.stage === 'buzzed' && c.single))) {
+        c.buzzed = null;
+        showQuestion();
+      }
     },
     open() {
       const c = S.clue;
@@ -888,15 +914,22 @@ export async function startPlay(root, boardId) {
         return { v: 'dd', key: c.key, cat, team: tinfo(c.ddTeam), text: '{team} делают ставку' };
       }
       const revealed = c.stage === 'answer';
-      const ref = host ? hostPick(cl.media, cl.aMedia, revealed) : settings.phoneMedia ? phonePick(cl.media, cl.aMedia, revealed) : null;
+      const flashing = c.stage === 'flash';
+      // A flashed picture is gone once the text shows, and comes back with the answer.
+      const qMedia = flashSecs(cl) && !flashing && !revealed ? null : cl.media;
+      const ref = host ? hostPick(qMedia, cl.aMedia, revealed) : settings.phoneMedia ? phonePick(qMedia, cl.aMedia, revealed) : null;
       const which = ref && ref === cl.aMedia ? 'a' : 'q';
       const v = {
         v: 'clue', key: c.key, cat,
         label: c.dd ? (c.wager != null ? `ставка ${fmt(c.wager)}` : 'вопрос-ставка') : c.only ? `🤫 ${fmt(worth())}` : fmt(c.value),
-        text: host || settings.phoneText ? cl.q : 'Вопрос — на экране ведущего',
+        text: flashing ? '' : host || settings.phoneText ? cl.q : 'Вопрос — на экране ведущего',
         media: ref ? (host ? ref : describe(ref)) : null, mediaKey: ref ? `${c.key}:${which}` : '',
         autoplay: settings.mediaSync === 'all', stage: c.stage,
       };
+      if (flashing) {
+        v.timer = { deadline: c.flashUntil, total: c.flashTotal };
+        v.status = { text: 'Запоминайте! Скоро картинка исчезнет и появится вопрос' };
+      }
       if (c.stage === 'open' && c.deadline) v.timer = { deadline: c.deadline, total: settings.timer * 1000 };
       if (c.stage === 'buzzed' && c.ansDeadline) v.timer = { deadline: c.ansDeadline, total: c.ansTotal || Math.max(5, settings.timer) * 1000 };
       if (c.stage === 'reading') v.status = { text: c.dd ? `Отвечают {team} · ставка ${fmt(c.wager)}` : usesPhones() ? 'Кнопки закрыты — слушайте вопрос' : 'Отвечайте вслух', team: tinfo(c.ddTeam) };
@@ -1289,6 +1322,7 @@ export async function startPlay(root, boardId) {
     switch (c.stage) {
       case 'mod': return `${c.mod.kind === 'cat' ? 'Секретный вопрос' : `Модернизатор «${MODS[c.mod.kind].name}»`}${c.mod.done ? '' : `: выбирают ${team(c.mod.team)?.name || '…'}`}`;
       case 'ddIntro': return `Вопрос-ставка! Отвечают ${team(c.ddTeam)?.name || '…'}`;
+      case 'flash': return 'Картинка на экране — запоминают';
       case 'reading': return c.dd ? `${team(c.ddTeam)?.name}: ставка ${fmt(c.wager)}` : usesPhones() ? 'Кнопки закрыты' : 'Кто ответит?';
       case 'open': return 'Кнопки открыты — жмите!';
       case 'buzzed': return `Отвечают ${team(c.buzzed?.team)?.name}${player(c.buzzed?.pid) ? ` (${player(c.buzzed.pid).name})` : ''}`;
@@ -1301,6 +1335,9 @@ export async function startPlay(root, boardId) {
     const c = S.clue;
     if (S.phase === 'clue' && c) {
       const v = worth();
+      if (c.stage === 'flash') return [{ items: [{ label: 'Сразу к вопросу →', act: 'flashSkip', cls: 'primary big', key: 'Пробел' }] }];
+      const again = flashSecs(clueAt(c)) && (c.stage === 'reading' || (c.stage === 'buzzed' && c.single))
+        ? [{ items: [{ label: '↺ Показать картинку ещё раз', act: 'reflash', cls: 'ghost' }] }] : [];
       switch (c.stage) {
         case 'mod': {
           const m = c.mod;
@@ -1324,10 +1361,11 @@ export async function startPlay(root, boardId) {
           return rows;
         }
         case 'reading':
-          if (c.dd) return [{ items: [{ label: `Верно +${fmt(v)}`, act: 'correct', cls: 'green big' }, { label: `Неверно −${fmt(v)}`, act: 'wrong', cls: 'red big' }] }];
+          if (c.dd) return [{ items: [{ label: `Верно +${fmt(v)}`, act: 'correct', cls: 'green big' }, { label: `Неверно −${fmt(v)}`, act: 'wrong', cls: 'red big' }] }, ...again];
           if (usesPhones()) return [
             { items: [{ label: 'Открыть кнопки', act: 'open', cls: 'yellow big', key: 'Пробел' }] },
             { items: [{ label: 'Никто не знает — показать ответ', act: 'reveal', cls: 'ghost', key: 'N' }] },
+            ...again,
           ];
           return [
             ...S.teams.map((t) => ({
@@ -1338,6 +1376,7 @@ export async function startPlay(root, boardId) {
               ],
             })),
             { items: [{ label: 'Показать ответ', act: 'reveal', cls: 'ghost', key: 'N' }] },
+            ...again,
           ];
         case 'open': {
           const el = eligible();
@@ -1351,6 +1390,7 @@ export async function startPlay(root, boardId) {
           return [
             { items: [{ label: `Верно +${fmt(v)}`, act: 'correct', cls: 'green big' }, { label: pen ? `Неверно −${fmt(pen)}` : 'Неверно', act: 'wrong', cls: 'red big' }] },
             { items: [{ label: c.single ? 'Не знают — показать ответ' : 'Никто не знает', act: 'reveal', cls: 'ghost', key: 'N' }] },
+            ...again,
           ];
         }
         case 'answer':
@@ -1892,6 +1932,7 @@ export async function startPlay(root, boardId) {
     const c = S.clue;
     const now = Date.now();
     if (S.phase === 'mini' && S.mini && miniTick(now)) commit();
+    if (S.phase === 'clue' && c?.stage === 'flash' && now >= c.flashUntil) { afterFlash(); sfx('open'); commit(); }
     const p = S.parade;
     if (S.phase === 'parade' && p && !p.done && p.paused == null && now - p.start >= p.dur) { p.done = true; commit(); }
     if (S.phase === 'clue' && c?.stage === 'open' && c.deadline && now >= c.deadline && !buzzTimer) {
@@ -1921,6 +1962,7 @@ export async function startPlay(root, boardId) {
       if (c?.stage === 'reading' && usesPhones() && !c.dd) return act('open');
       if (c?.stage === 'answer') return act('cont');
       if (c?.stage === 'mod' && c.mod.done) return act('modNext');
+      if (c?.stage === 'flash') return act('flashSkip');
       if (S.phase === 'mini' && S.mini?.stage === 'done') return act('miniEnd');
       if (S.phase === 'parade') return act(S.parade?.done ? 'paradeEnd' : 'paradePause');
       if (S.phase === 'roundEnd') return act('nextRound');
@@ -1954,6 +1996,7 @@ export async function startPlay(root, boardId) {
       for (const p of S.players) p.online = false;
       if (S.clue) {
         clearBuzz();
+        if (S.clue.stage === 'flash') afterFlash();
         if (S.clue.single && S.clue.stage === 'buzzed') startQuestion();
         else if (S.clue.stage === 'open' || S.clue.stage === 'buzzed') { S.clue.stage = 'reading'; S.clue.buzzed = null; }
       }

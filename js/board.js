@@ -1,5 +1,5 @@
-import { uid } from './util.js?v=1793552895431';
-import { isMod } from './mods.js?v=1793552895431';
+import { uid } from './util.js?v=1793557124832';
+import { isMod } from './mods.js?v=1793557124832';
 
 export const ROUND1_VALUES = [200, 400, 600, 800, 1000];
 
@@ -46,6 +46,8 @@ export function mediaRefs(board) {
 export const hasQ = (c) => !!(c && ((c.q || '').trim() || c.media));
 export const filled = (c) => hasQ(c) || !!c?.mod;
 export const finalReady = (b) => !!(b.final && b.final.enabled && hasQ(b.final));
+// «Запоминайте!»: the question's picture or video is shown alone for this many seconds, then hidden.
+export const FLASH_KINDS = ['image', 'video'];
 export const roundPlayable = (r) => r.categories.some((c) => c.clues.some(filled));
 
 export function stats(board) {
@@ -75,7 +77,11 @@ export function normalize(b) {
       while (c.clues.length < r.values.length) c.clues.push(newClue());
       c.clues.length = r.values.length;
       c.clues = c.clues.map((x) => ({ ...newClue(), ...x, q: String(x?.q || ''), a: String(x?.a || '') }));
-      for (const x of c.clues) if (!isMod(x.mod)) delete x.mod;
+      for (const x of c.clues) {
+        if (!isMod(x.mod)) delete x.mod;
+        if (x.flash > 0) x.flash = Math.min(60, Math.round(x.flash));
+        else delete x.flash;
+      }
     }
   }
   b.final = { enabled: true, category: '', ...newClue(), ...(b.final || {}) };

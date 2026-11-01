@@ -1,9 +1,9 @@
-import * as db from './db.js?v=1793552895431';
-import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1793552895431';
-import { newClue, newRound, filled, hasQ } from './board.js?v=1793552895431';
-import { MODS, MOD_IDS, RANDOM, modIcon, modName, chancesText } from './mods.js?v=1793552895431';
-import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1793552895431';
-import * as screamer from './screamer.js?v=1793552895431';
+import * as db from './db.js?v=1793557124832';
+import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1793557124832';
+import { newClue, newRound, filled, hasQ, FLASH_KINDS } from './board.js?v=1793557124832';
+import { MODS, MOD_IDS, RANDOM, modIcon, modName, chancesText } from './mods.js?v=1793557124832';
+import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1793557124832';
+import * as screamer from './screamer.js?v=1793557124832';
 
 export async function renderEditor(root, id) {
   const board = await db.getBoard(id);
@@ -101,7 +101,7 @@ export async function renderEditor(root, id) {
 
   function cellHTML(cl, v, ci, qi) {
     const hidden = cl.media?.phone === false || cl.aMedia?.phone === false;
-    const icons = [cl.mod && modIcon(cl.mod), cl.media && KIND_ICON[kindOf(cl.media)], cl.aMedia && '💡', hidden && '📵'].filter(Boolean).join(' ');
+    const icons = [cl.mod && modIcon(cl.mod), cl.flash && cl.media && '⏱', cl.media && KIND_ICON[kindOf(cl.media)], cl.aMedia && '💡', hidden && '📵'].filter(Boolean).join(' ');
     const has = filled(cl);
     const text = cl.q || (hasQ(cl) ? '(только медиа)' : `Модернизатор «${modName(cl.mod)}» без вопроса`);
     return `<button class="ed-cell ${has ? '' : 'empty'} ${hasQ(cl) && !cl.a.trim() ? 'warn' : ''} ${cl.mod ? 'mod' : ''}" data-clue="${ci},${qi}">
@@ -322,6 +322,7 @@ export async function renderEditor(root, id) {
         <label class="lbl">Вопрос</label>
         <textarea class="input" rows="3" data-f="q" placeholder="Текст вопроса (можно оставить пустым, если вопрос — это картинка или звук)"></textarea>
         <div class="media-zone" data-slot="media"></div>
+        <label class="ce-flash" hidden><input type="checkbox" data-f="flash"> <span>⏱ Показать её только на</span> <input class="input tiny" type="number" min="1" max="60" step="1" data-f="flashSecs"> <span>сек</span><span class="muted small ce-flash-note">Потом картинка исчезнет и появится текст вопроса — для вопросов на внимательность: «Сколько кошек было на картинке?». С ответом она вернётся.</span></label>
         <label class="lbl">Ответ</label>
         <input class="input" data-f="a" placeholder="Правильный ответ">
         <details class="amedia"><summary>Картинка к ответу <span class="muted small">(необязательно — покажется, когда откроется ответ)</span></summary><div class="media-zone" data-slot="aMedia"></div></details>
@@ -345,6 +346,24 @@ export async function renderEditor(root, id) {
         const q = $('[data-f=q]', w);
         const a = $('[data-f=a]', w);
         const mod = $('[data-f=mod]', w);
+        const flash = $('[data-f=flash]', w);
+        const flashSecs = $('[data-f=flashSecs]', w);
+        // The flash option only makes sense for a picture or a video in the question.
+        const refreshFlash = () => {
+          const cl = clue();
+          const can = !!cl.media && FLASH_KINDS.includes(kindOf(cl.media));
+          $('.ce-flash', w).hidden = !can;
+          flash.checked = can && cl.flash > 0;
+          flashSecs.value = cl.flash || 5;
+        };
+        const setFlash = () => {
+          const n = Math.min(60, Math.max(1, Math.round(+flashSecs.value || 5)));
+          if (flash.checked) clue().flash = n;
+          else delete clue().flash;
+          touch(); refreshCell();
+        };
+        flash.addEventListener('change', setFlash);
+        flashSecs.addEventListener('change', () => { if (flash.checked) setFlash(); });
         const modDesc = () => {
           const id = clue().mod;
           $('.ce-mod-desc', w).textContent = !id ? '' : MOD_IDS.includes(id) ? MODS[id].desc(r.values[cur.qi]) : `Каждый раз выпадает случайный: ${chancesText()}.`;
@@ -365,7 +384,8 @@ export async function renderEditor(root, id) {
           // A modifier that was taken out of the game plays as a random one now.
           mod.value = !cl.mod ? '' : MOD_IDS.includes(cl.mod) ? cl.mod : 'random';
           modDesc();
-          zones.media = mediaZone($('[data-slot=media]', w), () => clue().media, (v) => { clue().media = v; }, () => { touch(); refreshCell(); });
+          zones.media = mediaZone($('[data-slot=media]', w), () => clue().media, (v) => { clue().media = v; }, () => { touch(); refreshCell(); refreshFlash(); });
+          refreshFlash();
           zones.aMedia = mediaZone($('[data-slot=aMedia]', w), () => clue().aMedia, (v) => { clue().aMedia = v; }, () => { touch(); refreshCell(); });
           $('.amedia', w).open = !!cl.aMedia;
           activeZone = null;
@@ -401,6 +421,7 @@ export async function renderEditor(root, id) {
             dropClueMedia(cl);
             Object.assign(cl, newClue());
             delete cl.mod;
+            delete cl.flash;
             touch(); refreshCell(); resetZones(); load();
           }
         });
