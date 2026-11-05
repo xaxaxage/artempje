@@ -370,3 +370,19 @@
 .gs .ctl-range { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 180px; font-size: 13px; font-weight: 600; color: var(--g-muted); }
 .gs .ctl-range b { color: var(--g-ink); font-variant-numeric: tabular-nums; }
 .gs .ctl-range input { width: 100%; accent-color: var(--g-accent); }
+
+/* ---------- rating the game at the end, in «артёмчики» ---------- */
+.g-rate { display: flex; align-items: center; gap: 14px; margin-top: 6px; padding: 10px 18px 10px 10px; border-radius: 16px; background: var(--g-panel); border: 1px solid var(--g-line); text-align: left; }
+.g-rate img { width: 64px; height: 64px; border-radius: 50%; object-fit: cover; flex: none; }
+.g-rate b { display: block; font-size: clamp(17px, 2vw, 24px); color: var(--g-ink); }
+.g-rate span { color: var(--g-muted); font-size: 14px; }
+.g-faces { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 4px; }
+.g-face { aspect-ratio: 1; border-radius: 50%; border: 2px solid var(--g-line); background: center 20% / cover no-repeat; filter: grayscale(1); opacity: .45; cursor: pointer; padding: 0; transition: transform .1s, opacity .15s, filter .15s; touch-action: manipulation; }
+.g-face.on { filter: none; opacity: 1; border-color: var(--g-accent); }
+.g-face:active { transform: scale(.9); }
+.rate-ov { position: fixed; inset: 0; z-index: 85; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(20, 22, 28, .92); color: #fff; font-family: Inter, system-ui, sans-serif; text-align: center; animation: g-pop .35s ease-out both; }
+.rate-in { display: flex; flex-direction: column; align-items: center; gap: 12px; width: min(420px, 100%); }
+.rate-in img { width: min(260px, 70vw); aspect-ratio: 1; border-radius: 50%; object-fit: cover; object-position: center 20%; border: 4px solid #fff; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); }
+.rate-big { font-size: 32px; font-weight: 800; line-height: 1.15; }
+.rate-sub { font-size: 17px; opacity: .85; }
+.rate-close { font-size: 13px; opacity: .55; }

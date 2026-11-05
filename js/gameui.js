@@ -1,8 +1,8 @@
 // The game screen shared by the host and the players: three layouts, soft themes and the ⚙ popover.
 // Pages build a plain "model" of what to show; this module turns it into DOM and reports clicks back.
-import { esc, nl2br, fmt, store } from './util.js?v=1793557124832';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793557124832';
-import { sound } from './sound.js?v=1793557124832';
+import { esc, nl2br, fmt, store, plural } from './util.js?v=1793919615882';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793919615882';
+import { sound } from './sound.js?v=1793919615882';
 
 export const THEMES = [['sand', 'Песок', '#5b8a85'], ['studio', 'Студия', '#3a4a85'], ['night', 'Ночь', '#a99cf0'], ['mint', 'Мята', '#4fae8f'], ['lilac', 'Лаванда', '#8c7cc2']];
 export const LAYOUTS = [['a', 'Колонка справа'], ['b', 'Счёт внизу'], ['c', 'Телешоу']];
@@ -11,6 +11,10 @@ export const BUZZ = [['round', 'Круглая кнопка'], ['bar', 'Поло
 // Look and feel is personal: every device keeps its own choice.
 const PREFS_KEY = 'plyukh-ui';
 // vol: question audio and video, sfx: the game's own beeps (host only). Both 0–1.
+// The game's namesake, pleased: he shows up when the game gets rated («N артёмчиков из 10»).
+export const ARTEM_PHOTO = new URL('../assets/artem.webp', import.meta.url).href;
+export const artems = (n) => `${String(n).replace('.', ',')} ${Number.isInteger(n) ? plural(n, 'артёмчик', 'артёмчика', 'артёмчиков') : 'артёмчика'} из 10`;
+
 export const prefs = { theme: 'sand', layout: 'a', buzz: 'round', vol: 0.7, sfx: 0.7, ...store.get(PREFS_KEY, {}) };
 const savePrefs = () => store.set(PREFS_KEY, prefs);
 sound.vol = prefs.sfx;
@@ -77,6 +81,8 @@ export function createScreen(parent, opts) {
     if (pm) return on('playerMenu', { pid: pm.dataset.player });
     const tm = t.closest('[data-tmenu]');
     if (tm) return on('teamMenu', { team: tm.dataset.tmenu });
+    const rate = t.closest('[data-rate]');
+    if (rate) return on('rate', { n: +rate.dataset.rate });
     const choice = t.closest('[data-choice]');
     if (choice) return on('choice', { id: choice.dataset.choice });
     const join = t.closest('[data-join]');
@@ -296,7 +302,11 @@ export function createScreen(parent, opts) {
       case 'end': {
         const st = v.standings;
         const pods = st.slice(0, 3).map((s, i) => `<div class="g-pod p${i + 1}"><div class="nm">${esc(s.name)}</div><div class="sc">${fmt(s.score)}</div><div class="bar">${i + 1}</div></div>`);
-        return `<h2>${st[0] ? `Победа: ${esc(st[0].name)}!` : 'Игра окончена'}</h2><div class="g-podium">${[pods[1], pods[0], pods[2]].filter(Boolean).join('')}</div>${st.length > 3 ? standingsHTML(st, 3) : ''}`;
+        const r = v.rating;
+        const rate = !r ? '' : r.n
+          ? `<div class="g-rate"><img src="${ARTEM_PHOTO}" alt=""><div><b>${artems(r.avg)}</b><span>оценка игры · ${r.n} ${plural(r.n, 'голос', 'голоса', 'голосов')}</span></div></div>`
+          : `<div class="g-rate"><img src="${ARTEM_PHOTO}" alt=""><div><b>Оцените игру!</b><span>на телефонах — в артёмчиках</span></div></div>`;
+        return `<h2>${st[0] ? `Победа: ${esc(st[0].name)}!` : 'Игра окончена'}</h2><div class="g-podium">${[pods[1], pods[0], pods[2]].filter(Boolean).join('')}</div>${st.length > 3 ? standingsHTML(st, 3) : ''}${rate}`;
       }
       default:
         return '';
@@ -364,6 +374,12 @@ export function createScreen(parent, opts) {
         panel.innerHTML = `<form class="p-form" data-form="${esc(f.key)}" data-type="${f.type}"><div class="p-lbl">${esc(f.title)}</div><div class="p-text p-sub"></div>${field}${quick}<button class="btn primary">${esc(f.label)}</button></form>`;
       }
       panel.querySelector('.p-sub').textContent = f.sub || '';
+      return;
+    }
+    if (p.kind === 'rate') {
+      panel._k = null;
+      const faces = Array.from({ length: 10 }, (_, i) => `<button type="button" class="g-face ${p.value && i < p.value ? 'on' : ''}" data-rate="${i + 1}" style="background-image:url('${ARTEM_PHOTO}')" aria-label="${i + 1} из 10"></button>`).join('');
+      setHTML(panel, `<div class="p-lbl">${esc(p.lbl)}</div><div class="p-text">${esc(p.text)}</div><div class="g-faces">${faces}</div>`);
       return;
     }
     if (p.kind === 'choice') {

@@ -1,11 +1,11 @@
 // One played game, as it happened: who played, every question in order, and a "time machine"
 // that steps through the game showing the board, the question and the score at that moment.
-import * as db from './db.js?v=1793557124832';
-import { esc, nl2br, fmt, signed, plural, confirmDlg } from './util.js?v=1793557124832';
-import { getGame, removeGame } from './history.js?v=1793557124832';
-import { srcOf } from './media.js?v=1793557124832';
-import { MODS } from './mods.js?v=1793557124832';
-import { GAMES } from './minigames.js?v=1793557124832';
+import * as db from './db.js?v=1793919615882';
+import { esc, nl2br, fmt, signed, plural, confirmDlg } from './util.js?v=1793919615882';
+import { getGame, removeGame } from './history.js?v=1793919615882';
+import { srcOf } from './media.js?v=1793919615882';
+import { MODS } from './mods.js?v=1793919615882';
+import { GAMES } from './minigames.js?v=1793919615882';
 
 const MODE_NAMES = { simple: 'простой режим', buzzer: 'с кнопками' };
 // Team colours are validated for the light surface; these two need a deeper step on the dark one.
@@ -95,7 +95,7 @@ export async function renderHistory(root, id) {
   const mins = h.startedAt ? Math.max(1, Math.round((h.at - h.startedAt) / 60000)) : 0;
   const steps = h.v === 2 ? buildSteps(h) : [];
   const clueSteps = steps.filter((s) => s.kind === 'clue');
-  const meta = [day(h.at), mins ? `${mins} мин` : '', MODE_NAMES[h.mode] || '', h.answer === 'turns' ? 'по очереди' : '', clueSteps.length ? `${clueSteps.length} ${plural(clueSteps.length, 'вопрос', 'вопроса', 'вопросов')}` : ''].filter(Boolean).join(' · ');
+  const meta = [day(h.at), mins ? `${mins} мин` : '', MODE_NAMES[h.mode] || '', h.answer === 'turns' ? 'по очереди' : '', h.rating ? `оценка ${String(h.rating.avg).replace('.', ',')} из 10` : '', clueSteps.length ? `${clueSteps.length} ${plural(clueSteps.length, 'вопрос', 'вопроса', 'вопросов')}` : ''].filter(Boolean).join(' · ');
 
   root.innerHTML = `
     <div class="page hv">

@@ -10,11 +10,12 @@ export const GIFT = 1000;
 export const ROBIN = 1000;
 
 export const MODS = {
-  flip: { icon: '🔄', name: 'Наоборот', chance: 45, desc: () => 'Очки меняют знак: плюс становится минусом, минус — плюсом' },
+  flip: { icon: '🔄', name: 'Наоборот', chance: 35, desc: () => 'Очки меняют знак: плюс становится минусом, минус — плюсом' },
   bomb: { icon: '💣', name: 'Бомба', chance: 25, desc: () => `Сразу −${BOMB} очков` },
   gift: { icon: '🎁', name: 'Подарок', chance: 15, desc: () => `Сразу +${GIFT} очков, просто так` },
   swap: { icon: '🔀', name: 'Обмен', chance: 10, desc: () => 'Меняетесь очками с командой, которую выберете', target: true, many: true, ask: 'С кем меняетесь очками?' },
   robin: { icon: '🏹', name: 'Робин Гуд', chance: 5, desc: () => `Лидер отдаёт ${ROBIN} очков тем, кто на последнем месте`, many: true },
+  help: { icon: '🆘', name: 'Допомога', chance: 10, question: true, desc: () => 'Отвечаете только вы, и можно приблизительно: пробуйте сколько угодно, пока ведущий не скажет «хватит». Ошибки очков не отнимают' },
   // The secret question ("кот в мешке"): the id stays 'cat' so boards made earlier keep working.
   cat: { icon: '🤫', name: 'Секретный вопрос', chance: 0, head: 'Сюрприз!', desc: () => 'Себе оставить нельзя: не глядя отдаёте его другой команде. Очки получает или теряет только та, что ответит', target: true, many: true, question: true, ask: 'Кому отдаёте секретный вопрос?' },
   steal: { icon: '🦝', name: 'Вор', retired: true, desc: (v) => `Забираете ${v} очков у команды, которую выберете` },
@@ -29,7 +30,7 @@ export const modName = (id) => (MODS[id] || RANDOM).name;
 // What the banner says at the top: most cells are "Модернизатор!", the secret question is its own thing.
 export const modHead = (id) => MODS[id]?.head || 'Модернизатор!';
 // "Наоборот 45%, Бомба 25%, …" — what a random modifier can turn out to be.
-export const chancesText = () => MOD_IDS.filter((k) => MODS[k].chance).map((k) => `${MODS[k].name} ${MODS[k].chance}%`).join(', ');
+export const chancesText = () => MOD_IDS.filter((k) => MODS[k].chance).sort((a, b) => MODS[b].chance - MODS[a].chance).map((k) => `${MODS[k].name} ${MODS[k].chance}%`).join(', ');
 
 // Picks the modifier that will really happen. 'random' (or a retired one) is rolled by the chances
 // above; one that can't work here (one team, or a cell without a question) is rolled again among

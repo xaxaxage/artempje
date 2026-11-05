@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1793557124832';
-import { VERSION } from './version.js?v=1793557124832';
-import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1793557124832';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793557124832';
-import { MediaReceiver } from './mediasync.js?v=1793557124832';
-import { createScreen, prefs } from './gameui.js?v=1793557124832';
-import * as screamer from './screamer.js?v=1793557124832';
-import { MiniPlayer } from './minigames.js?v=1793557124832';
+import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1793919615882';
+import { VERSION } from './version.js?v=1793919615882';
+import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1793919615882';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793919615882';
+import { MediaReceiver } from './mediasync.js?v=1793919615882';
+import { createScreen, prefs, ARTEM_PHOTO, artems } from './gameui.js?v=1793919615882';
+import * as screamer from './screamer.js?v=1793919615882';
+import { MiniPlayer } from './minigames.js?v=1793919615882';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -316,6 +316,10 @@ function playerPanel(v) {
   if (v.phase === 'end' || v.phase === 'roundEnd') {
     const st = v.view?.standings || [];
     const place = st.findIndex((s) => s.me) + 1;
+    if (v.phase === 'end' && v.view?.rating) {
+      const placeText = place === 1 ? 'Ваша команда первая! 🏆' : place ? `Ваша команда на ${place} месте.` : '';
+      return { kind: 'rate', lbl: me.rating ? `Ваша оценка: ${artems(me.rating)}` : 'Оцените игру', text: `${placeText} ${me.rating ? 'Можно поменять:' : 'Сколько артёмчиков из 10?'}`.trim(), value: me.rating };
+    }
     return { kind: 'text', lbl: v.phase === 'end' ? 'Итог' : 'Раунд завершён', text: place === 1 ? 'Ваша команда первая! 🏆' : place ? `Ваша команда на ${place} месте` : '' };
   }
   return null;
@@ -323,7 +327,11 @@ function playerPanel(v) {
 
 // One team answers alone: "по очереди", or the secret question was handed to them.
 function singlePanel(c) {
-  const lbl = c.only ? '🤫 Секретный вопрос' : 'По очереди';
+  const lbl = c.help ? '🆘 Допомога' : c.only ? '🤫 Секретный вопрос' : 'По очереди';
+  if (c.help && c.stage === 'buzzed') {
+    if (!c.buzzedMine) return { kind: 'text', lbl, text: `{team} отвечают приблизительно${c.tries > 1 ? ` · попытка ${c.tries}` : ''}`, team: c.buzzedTeam };
+    return { kind: 'text', lbl, text: `${c.tries > 1 ? `Мимо! Попытка ${c.tries}. ` : ''}Отвечайте приблизительно — можно сколько угодно раз, пока ведущий не скажет «хватит». Ошибки очков не отнимают.` };
+  }
   if (c.stage === 'answer') {
     const r = c.result;
     if (!r) return { kind: 'text', lbl, text: 'Никто не ответил' };
@@ -332,6 +340,17 @@ function singlePanel(c) {
   }
   if (c.buzzedMine) return { kind: 'text', lbl: c.only ? lbl : 'Ваш ход', text: 'Отвечайте вслух — ведущий отметит, верно или нет.' };
   return { kind: 'text', lbl, text: 'Отвечают {team}', team: c.buzzedTeam };
+}
+
+// After rating the game: the namesake, pleased, full screen. A tap closes it.
+function showRated(n) {
+  document.querySelector('.rate-ov')?.remove();
+  const el = document.createElement('div');
+  el.className = 'rate-ov';
+  el.innerHTML = `<div class="rate-in"><img src="${ARTEM_PHOTO}" alt=""><div class="rate-big">${esc(artems(n))}</div>
+    <div class="rate-sub">${n >= 8 ? 'Спасибо! Артёмчик доволен' : n >= 5 ? 'Спасибо за оценку!' : 'Артёмчик это запомнит…'}</div><div class="rate-close">нажми, чтобы закрыть</div></div>`;
+  el.addEventListener('click', () => el.remove());
+  document.body.append(el);
 }
 
 // ---------- player: the screen ----------
@@ -387,6 +406,9 @@ function onScreen(type, d = {}) {
     case 'pick': return client?.send({ t: 'pick', c: d.c, q: d.q });
     case 'join': return client?.send({ t: 'team', team: d.team });
     case 'choice': return client?.send({ t: 'modTarget', team: d.id });
+    case 'rate':
+      client?.send({ t: 'rate', n: d.n });
+      return showRated(d.n);
     case 'prefs': return render();
     case 'link': return confirmLeave(d.name === 'home');
     case 'form': {

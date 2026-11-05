@@ -1,19 +1,19 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1793557124832';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1793557124832';
-import { filled, hasQ, finalReady, roundPlayable, FLASH_KINDS } from './board.js?v=1793557124832';
-import { mediaEl, kindOf } from './media.js?v=1793557124832';
-import { play as sfx, sound, unlock } from './sound.js?v=1793557124832';
-import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1793557124832';
-import { setHTML } from './controls.js?v=1793557124832';
-import { saveGame } from './history.js?v=1793557124832';
-import { MediaSender, describe } from './mediasync.js?v=1793557124832';
-import { VERSION } from './version.js?v=1793557124832';
-import { createScreen } from './gameui.js?v=1793557124832';
-import * as screamer from './screamer.js?v=1793557124832';
-import { MODS, BOMB, GIFT, ROBIN, modHead, resolveMod } from './mods.js?v=1793557124832';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1793557124832';
+import * as db from './db.js?v=1793919615882';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1793919615882';
+import { filled, hasQ, finalReady, roundPlayable, FLASH_KINDS } from './board.js?v=1793919615882';
+import { mediaEl, kindOf } from './media.js?v=1793919615882';
+import { play as sfx, sound, unlock } from './sound.js?v=1793919615882';
+import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1793919615882';
+import { setHTML } from './controls.js?v=1793919615882';
+import { saveGame } from './history.js?v=1793919615882';
+import { MediaSender, describe } from './mediasync.js?v=1793919615882';
+import { VERSION } from './version.js?v=1793919615882';
+import { createScreen } from './gameui.js?v=1793919615882';
+import * as screamer from './screamer.js?v=1793919615882';
+import { MODS, BOMB, GIFT, ROBIN, modHead, resolveMod } from './mods.js?v=1793919615882';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1793919615882';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 0, parade: true, paradeSpeed: 1 };
@@ -239,7 +239,7 @@ export async function startPlay(root, boardId) {
     c.stage = 'buzzed';
     c.buzzed = { team: single, pid: null };
     c.ansTotal = (Math.max(5, settings.timer) + 5) * 1000; // they also need to hear the question
-    c.ansDeadline = settings.timer ? Date.now() + c.ansTotal : 0;
+    c.ansDeadline = settings.timer && !c.help ? Date.now() + c.ansTotal : 0;
     c.ansBeeped = false;
   }
   // A clue may first show its picture alone for a few seconds («Запоминайте!»), then hide it and show
@@ -294,6 +294,7 @@ export async function startPlay(root, boardId) {
     S.startedAt = Date.now();
     S.endedAt = 0;
     S.log = [];
+    S.ratings = {};
     placeDDs();
     placeMods();
     S.phase = 'board';
@@ -364,6 +365,12 @@ export async function startPlay(root, boardId) {
         else note = 'У всех поровну — Робину некого грабить';
         break;
       }
+      case 'help':
+        c.only = m.team;
+        c.help = true;
+        c.tries = 1;
+        note = 'Отвечаете только вы — приблизительно и сколько угодно раз';
+        break;
       case 'cat':
         c.only = target;
         note = `Вопрос достаётся команде ${other?.name || '…'} — отвечают только они`;
@@ -415,6 +422,7 @@ export async function startPlay(root, boardId) {
       boardId: board.id,
       mode: S.mode,
       answer: settings.answer,
+      rating: rating(),
       teamMode: S.teamMode,
       teams: S.teams.map((t) => ({ id: t.id, name: t.name, color: t.color, score: t.score, members: members(t.id).map((p) => p.name) })),
       players: standings().map((t) => ({ name: solo() ? t.name : `${t.name}${members(t.id).length ? ` (${members(t.id).map((p) => p.name).join(', ')})` : ''}`, score: t.score })),
@@ -485,6 +493,11 @@ export async function startPlay(root, boardId) {
       c.wager = clamp(Math.round(+amount || 0), min, max);
       log({ k: 'dd', team: t.id, wager: c.wager });
       showQuestion();
+    },
+    // «Допомога»: a miss is just another try.
+    helpMiss() {
+      const c = S.clue;
+      if (c?.help && c.stage === 'buzzed') { c.tries = (c.tries || 1) + 1; sfx('wrong'); }
     },
     flashSkip() {
       if (S.clue?.stage === 'flash') afterFlash();
@@ -738,6 +751,9 @@ export async function startPlay(root, boardId) {
         if (p && S.clue?.stage === 'mod' && S.clue.mod.team === p.teamId) act('modTarget', { team: d.team });
         return;
       case 'mini': return onMini(pid, d);
+      case 'rate':
+        if (p && S.phase === 'end') { (S.ratings ||= {})[pid] = clamp(Math.round(+d.n || 0), 1, 10); commit(); }
+        return;
       case 'aux':
         if (p) auxTag(String(d.c || '').slice(0, 40)).then((t) => { if (t === AUX_TAG && !destroyed) net.send(conn, { t: 'aux', key: S.hostKey }); });
         return;
@@ -921,7 +937,7 @@ export async function startPlay(root, boardId) {
       const which = ref && ref === cl.aMedia ? 'a' : 'q';
       const v = {
         v: 'clue', key: c.key, cat,
-        label: c.dd ? (c.wager != null ? `ставка ${fmt(c.wager)}` : 'вопрос-ставка') : c.only ? `🤫 ${fmt(worth())}` : fmt(c.value),
+        label: c.dd ? (c.wager != null ? `ставка ${fmt(c.wager)}` : 'вопрос-ставка') : c.help ? `🆘 ${fmt(worth())}` : c.only ? `🤫 ${fmt(worth())}` : fmt(c.value),
         text: flashing ? '' : host || settings.phoneText ? cl.q : 'Вопрос — на экране ведущего',
         media: ref ? (host ? ref : describe(ref)) : null, mediaKey: ref ? `${c.key}:${which}` : '',
         autoplay: settings.mediaSync === 'all', stage: c.stage,
@@ -934,12 +950,12 @@ export async function startPlay(root, boardId) {
       if (c.stage === 'buzzed' && c.ansDeadline) v.timer = { deadline: c.ansDeadline, total: c.ansTotal || Math.max(5, settings.timer) * 1000 };
       if (c.stage === 'reading') v.status = { text: c.dd ? `Отвечают {team} · ставка ${fmt(c.wager)}` : usesPhones() ? 'Кнопки закрыты — слушайте вопрос' : 'Отвечайте вслух', team: tinfo(c.ddTeam) };
       if (c.stage === 'open') v.status = { text: `Кнопки открыты — жмите!${c.tried.length ? ` Мимо: ${c.tried.map((id) => team(id)?.name).join(', ')}` : ''}` };
-      if (c.stage === 'buzzed') v.status = { text: c.only ? 'Секретный вопрос: отвечают только {team}' : c.single ? 'Ход команды {team} — отвечайте!' : `Отвечают {team}${player(c.buzzed.pid) ? ` — ${player(c.buzzed.pid).name}` : ''}`, team: tinfo(c.buzzed.team) };
+      if (c.stage === 'buzzed') v.status = { text: c.help ? `Допомога: {team} отвечают приблизительно${c.tries > 1 ? ` — мимо, попытка ${c.tries}` : ''}` : c.only ? 'Секретный вопрос: отвечают только {team}' : c.single ? 'Ход команды {team} — отвечайте!' : `Отвечают {team}${player(c.buzzed.pid) ? ` — ${player(c.buzzed.pid).name}` : ''}`, team: tinfo(c.buzzed.team) };
       if (revealed && (host || settings.phoneText)) {
         const res = c.result;
         v.answer = {
           text: cl.a,
-          result: res ? { text: res.ok === false && !res.delta ? '{team} — мимо' : `{team} ${signed(res.delta)}`, team: tinfo(res.team), cls: (res.ok ?? res.delta >= 0) ? 'good' : 'bad' } : { text: 'Никто не ответил' },
+          result: !res && c.help ? { text: 'Не угадали — без очков' } : res ? { text: res.ok === false && !res.delta ? '{team} — мимо' : `{team} ${signed(res.delta)}`, team: tinfo(res.team), cls: (res.ok ?? res.delta >= 0) ? 'good' : 'bad' } : { text: 'Никто не ответил' },
         };
       }
       return v;
@@ -979,7 +995,7 @@ export async function startPlay(root, boardId) {
       }
       return v;
     }
-    if (S.phase === 'end') return { v: 'end', key: 'end', standings: standingsFor(pid) };
+    if (S.phase === 'end') return { v: 'end', key: 'end', standings: standingsFor(pid), rating: usesPhones() ? rating() || { n: 0 } : null };
     return { v: 'empty' };
   }
 
@@ -994,6 +1010,12 @@ export async function startPlay(root, boardId) {
     if (picking) return `${turns() ? 'Ваш ход! ' : ''}Ваша команда выбирает — ${how}`;
     if (!pk) return '';
     return turns() ? `Ход: ${pk}` : `Выбирают ${pk}`;
+  }
+
+  // How the players rated the game on their phones at the end, in «артёмчики» out of 10.
+  function rating() {
+    const all = Object.values(S.ratings || {});
+    return all.length ? { avg: Math.round((all.reduce((a, b) => a + b, 0) / all.length) * 10) / 10, n: all.length } : null;
   }
 
   function standingsFor(pid) {
@@ -1079,7 +1101,7 @@ export async function startPlay(root, boardId) {
         buzzedName: player(c.buzzed?.pid)?.name || '', lockedMs: Math.max(0, (locks[pid] || 0) - Date.now()),
         result: c.result ? { mine: c.result.team === t?.id, delta: c.result.delta, ok: c.result.ok, team: tinfo(c.result.team) } : null,
         wagerReq: c.stage === 'ddIntro' && t && c.ddTeam === t.id ? ddRange(t) : null,
-        single: !!c.single, only: !!c.only,
+        single: !!c.single, only: !!c.only, help: !!c.help, tries: c.tries || 0,
       };
       if (c.stage === 'mod') {
         const m = c.mod;
@@ -1099,6 +1121,7 @@ export async function startPlay(root, boardId) {
       };
     }
     if (S.phase === 'board' && t) me.turn = turns() && S.turn === t.id;
+    if (S.phase === 'end') me.rating = S.ratings?.[pid] ?? null;
     if (S.phase === 'final' && f && t) {
       me.fin = { stage: f.stage, max: Math.max(0, t.score), wager: f.wagers[t.id] ?? null, answer: f.answers[t.id] ?? null, judged: f.judged[t.id] ?? null };
     }
@@ -1386,6 +1409,13 @@ export async function startPlay(root, boardId) {
           return rows;
         }
         case 'buzzed': {
+          if (c.help) {
+            return [
+              { items: [{ label: `Засчитать +${fmt(v)}`, act: 'correct', cls: 'green big' }, { label: 'Мимо — пусть пробуют ещё', act: 'helpMiss', cls: 'red' }] },
+              { items: [{ label: 'Хватит — показать ответ', act: 'reveal', cls: 'ghost', key: 'N' }] },
+              ...again,
+            ];
+          }
           const pen = penalty();
           return [
             { items: [{ label: `Верно +${fmt(v)}`, act: 'correct', cls: 'green big' }, { label: pen ? `Неверно −${fmt(pen)}` : 'Неверно', act: 'wrong', cls: 'red big' }] },
