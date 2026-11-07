@@ -1,8 +1,8 @@
 // Delivers clue media from the host's browser to phones.
 // Links (http, YouTube) are loaded by the phone itself; stored files and data: URLs are streamed
 // over the JSON data channel in small base64 chunks (PeerJS rejects JSON messages over ~16 KB).
-import * as db from './db.js?v=1794054826661';
-import { kindOf } from './media.js?v=1794054826661';
+import * as db from './db.js?v=1794068648162';
+import { kindOf } from './media.js?v=1794068648162';
 
 const CHUNK = 9000; // bytes per message: 12 000 base64 chars, well under the limit
 const PREFETCH_MAX = 15e6; // bigger files are only sent when their clue is opened
@@ -51,7 +51,7 @@ export class MediaSender {
   }
 
   state(conn) {
-    return (conn._media ||= { sent: new Set(), queue: [], urgent: new Set(), current: null, preempt: false, running: false });
+    return (conn._media ||= { sent: new Set(), queue: [], urgent: new Set(), big: new Set(), current: null, preempt: false, running: false });
   }
 
   // The phone already has these (it keeps its cache across reconnects).
@@ -61,11 +61,13 @@ export class MediaSender {
   }
 
   // Queue a ref for one phone. `urgent`: its clue is on screen right now, so it jumps the queue.
-  want(conn, ref, urgent = false) {
+  // `big`: send it ahead of time even if it's over the prefetch limit (the game's intro).
+  want(conn, ref, urgent = false, big = false) {
     const key = mediaKey(ref);
     if (!key) return;
     this.refs.set(key, ref);
     const st = this.state(conn);
+    if (big) st.big.add(key);
     if (st.sent.has(key) || st.current === key) return;
     const i = st.queue.indexOf(key);
     if (i >= 0) {
@@ -103,7 +105,7 @@ export class MediaSender {
         const key = st.queue.shift();
         if (st.sent.has(key)) continue;
         const blob = await this.blob(key);
-        if (!blob || (blob.size > PREFETCH_MAX && !st.urgent.has(key))) continue;
+        if (!blob || (blob.size > PREFETCH_MAX && !st.urgent.has(key) && !st.big.has(key))) continue;
         st.current = key;
         st.preempt = false;
         this.send(conn, { t: 'm0', key, mime: blob.type || this.refs.get(key)?.mime || '', size: blob.size });

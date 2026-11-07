@@ -1,9 +1,9 @@
-import * as db from './db.js?v=1794054826661';
-import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1794054826661';
-import { newClue, newRound, filled, hasQ, FLASH_KINDS } from './board.js?v=1794054826661';
-import { MODS, MOD_IDS, RANDOM, modIcon, modName, chancesText } from './mods.js?v=1794054826661';
-import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1794054826661';
-import * as screamer from './screamer.js?v=1794054826661';
+import * as db from './db.js?v=1794068648162';
+import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1794068648162';
+import { newClue, newRound, filled, hasQ, FLASH_KINDS } from './board.js?v=1794068648162';
+import { MODS, MOD_IDS, RANDOM, modIcon, modName, chancesText } from './mods.js?v=1794068648162';
+import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1794068648162';
+import * as screamer from './screamer.js?v=1794068648162';
 
 export async function renderEditor(root, id) {
   const board = await db.getBoard(id);
@@ -449,12 +449,12 @@ export async function renderEditor(root, id) {
       <div class="extras">
         <div class="card">
           <h3>🎬 Интро в начале игры</h3>
-          <p class="muted small">Играет на весь экран у ведущего сразу после «Начать игру». Когда закончится, начнётся парад тем, а интро пойдёт по кругу на заднем фоне — тише и затемнённое. Лучше всего видеофайл; можно музыку или картинку (6 секунд). С YouTube конец не виден — жми «Пропустить».</p>
+          <p class="muted small">Играет на весь экран у ведущего и у игроков сразу после «Начать игру». Когда закончится, начнётся парад тем, а интро пойдёт по кругу на заднем фоне — тише и затемнённое. На телефоны видео начинает грузиться ещё в лобби, пока все собираются: чем меньше файл, тем быстрее. Лучше всего видеофайл; можно музыку или картинку (6 секунд). С YouTube конец не виден — жми «Пропустить».</p>
           <div class="media-zone" data-slot="intro"></div>
         </div>
         <div class="card">
           <h3>🚽 Туалетная пауза</h3>
-          <p class="muted small">Видео или картинка на весь экран, пока ты отошёл. Пауза — кнопка 🚽 вверху экрана игры или на пульте: таймеры замирают, игроки видят «ведущий скоро вернётся». Без видео будет просто заставка «перерыв».</p>
+          <p class="muted small">Видео или картинка на весь экран у ведущего и у игроков, пока ты отошёл. Пауза — кнопка 🚽 вверху экрана игры или на пульте: таймеры замирают, кнопки не жмутся. Без видео будет просто заставка «перерыв».</p>
           <div class="media-zone" data-slot="pause"></div>
         </div>
       </div>`;

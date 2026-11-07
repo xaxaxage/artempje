@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1794054826661';
-import { VERSION } from './version.js?v=1794054826661';
-import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1794054826661';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1794054826661';
-import { MediaReceiver } from './mediasync.js?v=1794054826661';
-import { createScreen, prefs, ARTEM_PHOTO, artems } from './gameui.js?v=1794054826661';
-import * as screamer from './screamer.js?v=1794054826661';
-import { MiniPlayer } from './minigames.js?v=1794054826661';
+import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1794068648162';
+import { VERSION } from './version.js?v=1794068648162';
+import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1794068648162';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1794068648162';
+import { MediaReceiver } from './mediasync.js?v=1794068648162';
+import { createScreen, prefs, ARTEM_PHOTO, artems } from './gameui.js?v=1794068648162';
+import * as screamer from './screamer.js?v=1794068648162';
+import { MiniPlayer } from './minigames.js?v=1794068648162';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -197,6 +197,8 @@ function onMsg(d) {
   }
   if (d.t !== 'state' && d.t !== 'hstate') return;
   view = d;
+  // The intro's position comes as time elapsed: remember when it arrived.
+  if (d.view?.elapsed != null) d.view.at = Date.now();
   if (d.t === 'state') {
     const c = d.me?.clue;
     if (c?.stage === 'open' && c.openId !== lastOpenId) { lastOpenId = c.openId; openAt = performance.now(); }
@@ -286,7 +288,7 @@ function playerPanel(v) {
       : { kind: 'text', lbl: 'Скоро начнём', text: 'Ведущий собирает игроков.' };
   }
   if (v.phase === 'mini') return { kind: 'text', lbl: 'Мини-игра', text: 'Играем прямо на телефоне!' };
-  if (v.phase === 'intro') return { kind: 'text', lbl: 'Заставка', text: 'Смотрите на большой экран — скоро начнём.' };
+  if (v.phase === 'intro') return { kind: 'text', lbl: 'Заставка', text: 'Сейчас начнём!' };
   if (v.phase === 'parade') return { kind: 'text', lbl: 'Темы игры', text: v.view?.done ? 'Это все темы. Скоро первый вопрос!' : 'Ведущий объявляет темы — среди них и тема финала.' };
   if (v.phase === 'clue' && c) {
     if (c.mod) {
@@ -445,6 +447,8 @@ function renderPlayer() {
   const c = me.clue;
   const vw = { ...v.view };
   if (vw.media) vw.mediaKey = `${vw.mediaKey}|${mediaReady(vw.media) ? 1 : 0}`;
+  if (vw.bg) vw.bgKey = `${vw.bgKey}|${mediaReady(vw.bg) ? 1 : 0}`;
+  const pause = v.pause ? { ...v.pause, mediaKey: v.pause.media ? `pause|${mediaReady(v.pause.media) ? 1 : 0}` : '' } : null;
   const open = v.phase === 'clue' && v.mode === 'buzzer' && c && !c.dd && c.stage === 'open';
   vw.tap = prefs.buzz === 'tap' && open;
   const teams = v.teams.map((t) => {
@@ -460,9 +464,10 @@ function renderPlayer() {
     view: vw,
     teams,
     panel: playerPanel(v),
-    pause: v.pause || null,
+    pause,
   });
-  if (vw.media?.key && !mediaReady(vw.media)) screen.setProgress(`${Math.round(receiver.progress(vw.media.key) * 100)}%`);
+  const loading = [pause?.media, vw.media].find((m) => m?.key && !mediaReady(m));
+  if (loading) screen.setProgress(`${Math.round(receiver.progress(loading.key) * 100)}%`);
 }
 
 // ---------- host remote ----------

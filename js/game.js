@@ -1,19 +1,19 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1794054826661';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1794054826661';
-import { filled, hasQ, finalReady, roundPlayable, FLASH_KINDS } from './board.js?v=1794054826661';
-import { mediaEl, kindOf } from './media.js?v=1794054826661';
-import { play as sfx, sound, unlock } from './sound.js?v=1794054826661';
-import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1794054826661';
-import { setHTML } from './controls.js?v=1794054826661';
-import { saveGame } from './history.js?v=1794054826661';
-import { MediaSender, describe } from './mediasync.js?v=1794054826661';
-import { VERSION } from './version.js?v=1794054826661';
-import { createScreen } from './gameui.js?v=1794054826661';
-import * as screamer from './screamer.js?v=1794054826661';
-import { MODS, BOMB, GIFT, ROBIN, modHead, resolveMod } from './mods.js?v=1794054826661';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1794054826661';
+import * as db from './db.js?v=1794068648162';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1794068648162';
+import { filled, hasQ, finalReady, roundPlayable, FLASH_KINDS } from './board.js?v=1794068648162';
+import { mediaEl, kindOf } from './media.js?v=1794068648162';
+import { play as sfx, sound, unlock } from './sound.js?v=1794068648162';
+import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1794068648162';
+import { setHTML } from './controls.js?v=1794068648162';
+import { saveGame } from './history.js?v=1794068648162';
+import { MediaSender, describe } from './mediasync.js?v=1794068648162';
+import { VERSION } from './version.js?v=1794068648162';
+import { createScreen } from './gameui.js?v=1794068648162';
+import * as screamer from './screamer.js?v=1794068648162';
+import { MODS, BOMB, GIFT, ROBIN, modHead, resolveMod } from './mods.js?v=1794068648162';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1794068648162';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 0, parade: true, paradeSpeed: 1 };
@@ -311,6 +311,7 @@ export async function startPlay(root, boardId) {
     const ref = introRef();
     if (!ref) { if (settings.parade) startParade('board'); return; }
     S.phase = 'intro';
+    S.introAt = Date.now();
     S.introUntil = kindOf(ref) === 'image' ? Date.now() + 6000 : 0;
   }
   function endIntro() {
@@ -742,6 +743,7 @@ export async function startPlay(root, boardId) {
       if (S.fin?.deadline) S.fin.deadline += d;
       if (S.mini?.until) S.mini.until += d;
       if (S.introUntil) S.introUntil += d;
+      if (S.introAt) S.introAt += d;
     },
     paradeEnd() {
       if (S.phase !== 'parade') return;
@@ -938,6 +940,8 @@ export async function startPlay(root, boardId) {
   // ---------- what each screen shows ----------
   // A file can be kept off the phones with its own checkbox in the editor.
   const forPhones = (ref) => (ref && ref.phone !== false ? ref : null);
+  // What a phone gets for a ref, when phones get media at all.
+  const toPhone = (ref) => (settings.phoneMedia && forPhones(ref) ? describe(ref) : null);
   // Answer media replaces the question's once revealed; if it's hidden, the question's stays.
   const phonePick = (qRef, aRef, revealed) => (revealed && forPhones(aRef)) || forPhones(qRef);
   const hostPick = (qRef, aRef, revealed) => (revealed && aRef) || qRef;
@@ -963,11 +967,11 @@ export async function startPlay(root, boardId) {
     if (S.phase === 'mini' && S.mini) return miniView(pid);
     if (S.phase === 'parade' && S.parade) {
       const p = S.parade;
-      const bg = host ? paradeBg() : null;
+      const bg = host ? paradeBg() : toPhone(paradeBg());
       return { v: 'parade', key: 'parade', list: p.list, dur: p.dur, elapsed: paradeElapsed(p), paused: p.paused != null, seq: p.seq, done: p.done, bg, bgKey: bg ? JSON.stringify(bg) : '' };
     }
     if (S.phase === 'intro') {
-      return { v: 'intro', key: 'intro', media: host ? introRef() : null };
+      return { v: 'intro', key: 'intro', media: host ? introRef() : toPhone(introRef()), mediaKey: 'intro', elapsed: Date.now() - (S.introAt || Date.now()) };
     }
     if (S.phase === 'clue') {
       const cl = clueAt(c);
@@ -1172,7 +1176,7 @@ export async function startPlay(root, boardId) {
     if (S.phase === 'final' && f && t) {
       me.fin = { stage: f.stage, max: Math.max(0, t.score), wager: f.wagers[t.id] ?? null, answer: f.answers[t.id] ?? null, judged: f.judged[t.id] ?? null };
     }
-    return { t: 'state', pause: S.pause ? { ago: Date.now() - S.pause.at } : null, phase: S.phase, mode: S.mode, answer: settings.answer, title: board.title, round: S.phase === 'final' ? 'Финал' : R()?.name || '', view, teams: teamsFor(pid), me, teamMode: S.teamMode };
+    return { t: 'state', pause: S.pause ? { ago: Date.now() - S.pause.at, media: toPhone(board.pause?.media) } : null, phase: S.phase, mode: S.mode, answer: settings.answer, title: board.title, round: S.phase === 'final' ? 'Финал' : R()?.name || '', view, teams: teamsFor(pid), me, teamMode: S.teamMode };
   }
 
   function hostView() {
@@ -1201,6 +1205,9 @@ export async function startPlay(root, boardId) {
 
   // The media phones show right now (it gets sent first).
   function phoneRef() {
+    if (S.pause) return board.pause?.media || null;
+    if (S.phase === 'intro') return introRef();
+    if (S.phase === 'parade') return paradeBg();
     const c = S.clue;
     if (S.phase === 'clue' && c && c.stage !== 'ddIntro') {
       const cl = clueAt(c);
@@ -1219,10 +1226,12 @@ export async function startPlay(root, boardId) {
     const add = (i) => board.rounds[i]?.categories.forEach((cat, ci) => cat.clues.forEach((cl, qi) => {
       if (filled(cl) && !S.used[keyOf(i, ci, qi)]) out.push(cl.media, cl.aMedia);
     }));
-    if (['setup', 'lobby'].includes(S.phase)) add(firstRound());
+    // The intro goes out first, while everyone is still gathering in the lobby.
+    if (['setup', 'lobby'].includes(S.phase)) { out.push(introRef()); add(firstRound()); }
     else if (['board', 'clue', 'roundEnd', 'mini', 'parade'].includes(S.phase)) add(S.round);
     if (S.phase === 'roundEnd') add(nextRoundIndex());
     if (finalReady(board) && S.phase !== 'end') out.push(board.final.media, board.final.aMedia);
+    if (S.phase !== 'end') out.push(board.pause?.media);
     return out.filter(forPhones);
   }
 
@@ -1230,7 +1239,8 @@ export async function startPlay(root, boardId) {
     if (!sender || !settings.phoneMedia) return;
     const cur = phoneRef();
     if (cur) sender.want(conn, cur, true);
-    for (const ref of upcomingRefs()) sender.want(conn, ref);
+    const big = [introRef(), board.pause?.media];
+    for (const ref of upcomingRefs()) sender.want(conn, ref, false, big.includes(ref));
   }
 
   function sendTo(pid) {

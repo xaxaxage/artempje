@@ -419,3 +419,9 @@
 .g-pause.has-media .g-pause-ico { display: none; }
 .g-pause.has-media .g-pause-card h2 { font-size: 22px; }
 .g-pause .btn.primary { margin-top: 6px; }
+
+/* sound that a phone wouldn't start by itself */
+.g-unmute { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); z-index: 3; border: none; border-radius: 99px; padding: 12px 20px; background: #fff; color: #1d1c19; font: 700 16px Inter, system-ui, sans-serif; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); cursor: pointer; }
+.g-intro .pc-loading, .g-pause-load .pc-loading { color: #fff; font: 600 16px Inter, system-ui, sans-serif; opacity: .85; }
+.g-par-bg .pc-loading { display: none; }
+.g-pause.has-media .g-pause-load { display: none; }

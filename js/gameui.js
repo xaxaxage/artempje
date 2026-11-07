@@ -1,8 +1,8 @@
 // The game screen shared by the host and the players: three layouts, soft themes and the ⚙ popover.
 // Pages build a plain "model" of what to show; this module turns it into DOM and reports clicks back.
-import { esc, nl2br, fmt, store, plural } from './util.js?v=1794054826661';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1794054826661';
-import { sound } from './sound.js?v=1794054826661';
+import { esc, nl2br, fmt, store, plural } from './util.js?v=1794068648162';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1794068648162';
+import { sound } from './sound.js?v=1794068648162';
 
 export const THEMES = [['sand', 'Песок', '#5b8a85'], ['studio', 'Студия', '#3a4a85'], ['night', 'Ночь', '#a99cf0'], ['mint', 'Мята', '#4fae8f'], ['lilac', 'Лаванда', '#8c7cc2']];
 export const LAYOUTS = [['a', 'Колонка справа'], ['b', 'Счёт внизу'], ['c', 'Телешоу']];
@@ -144,32 +144,59 @@ export function createScreen(parent, opts) {
     drawMain(m.view || { v: 'empty' });
     drawTeams(m.teams || []);
     drawPanel(m.panel, hasBar);
-    drawIntro(role === 'host' && m.view?.v === 'intro' ? m.view : null);
+    drawIntro(m.view?.v === 'intro' && m.view.media ? m.view : null);
     drawPause(m.pause || null);
   }
 
   // The first video element in a media node (the audio one comes wrapped in a div).
   const mediaIn = (n) => (n?.matches?.('video, audio') ? n : n?.querySelector?.('video, audio'));
+  // A phone may refuse to start sound by itself: then play muted and offer a button to turn it on.
+  function playSafe(m) {
+    m.play?.().catch(() => {
+      m.muted = true;
+      m.play?.().catch(() => {});
+      const box = m.closest('.g-intro, .g-pause, .g-parade');
+      if (!box || box.querySelector('.g-unmute')) return;
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'g-unmute';
+      b.textContent = '🔊 Включить звук';
+      b.addEventListener('click', () => { for (const x of box.querySelectorAll('video, audio')) { x.muted = false; x.play?.().catch(() => {}); } b.remove(); });
+      box.append(b);
+    });
+  }
 
-  // ---------- intro: full screen on the host, the game starts when it ends ----------
+  // ---------- intro: full screen everywhere; on the host the game goes on when it ends ----------
+  // Media comes in again when a phone finishes loading it (mediaKey changes); a late phone joins
+  // in at the host's moment.
   function drawIntro(v) {
     let ov = el.querySelector('.g-intro');
     if (!v) { ov?.remove(); return; }
-    if (ov || !v.media) return;
-    ov = document.createElement('div');
-    ov.className = 'g-intro';
-    ov.innerHTML = '<div class="g-intro-media"></div><button type="button" class="g-intro-skip" data-tool="introEnd">Пропустить ›</button>';
-    el.append(ov);
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.className = 'g-intro';
+      ov.innerHTML = `<div class="g-intro-media"></div>${role === 'host' ? '<button type="button" class="g-intro-skip" data-tool="introEnd">Пропустить ›</button>' : ''}`;
+      el.append(ov);
+    }
+    const box = ov.firstElementChild;
+    const mk = v.mediaKey || JSON.stringify(v.media);
+    if (box._mk === mk) return;
+    box._mk = mk;
+    box.innerHTML = '';
     opts.mediaNode(v.media, true).then((n) => {
-      if (!n || !ov.isConnected) return;
-      ov.firstElementChild.append(n);
+      if (!n || box._mk !== mk) return;
+      box.append(n);
       const m = mediaIn(n);
       if (!m) return;
       m.controls = false;
       m.volume = prefs.vol;
       m.dataset.resume = '1';
-      m.addEventListener('ended', () => on('tool', { name: 'introEnd' }));
-      m.play?.().catch(() => {});
+      if (role === 'host') m.addEventListener('ended', () => on('tool', { name: 'introEnd' }));
+      else if (v.elapsed > 1500) {
+        const at = (v.elapsed + Date.now() - (v.at || Date.now())) / 1000;
+        m.addEventListener('loadedmetadata', () => { if (Number.isFinite(m.duration)) m.currentTime = Math.min(at, Math.max(0, m.duration - 0.2)); }, { once: true });
+      }
+      playSafe(m);
     });
   }
 
@@ -182,28 +209,38 @@ export function createScreen(parent, opts) {
       for (const m of el.querySelectorAll('[data-resume]')) m.play?.().catch(() => {});
       return;
     }
-    if (ov) return;
-    // Whatever was playing waits too; the intro and the parade's background carry on afterwards.
-    for (const m of el.querySelectorAll('video, audio')) m.pause?.();
-    ov = document.createElement('div');
-    ov.className = 'g-pause';
-    ov.innerHTML = `<div class="g-pause-media"></div><div class="g-pause-card"><div class="g-pause-ico">🚽</div><h2>Туалетная пауза</h2>
-      <p>${role === 'host' ? 'Игра на паузе: таймеры стоят, кнопки не жмутся.' : 'Ведущий скоро вернётся. Игра на паузе.'}</p>
-      <div class="g-pause-t" data-since="${Date.now() - p.ago}"></div>
-      ${role === 'host' ? '<button type="button" class="btn primary big" data-tool="unpause">▶ Продолжить игру</button>' : ''}</div>`;
-    el.append(ov);
-    tick();
+    if (!ov) {
+      // Whatever was playing waits too; the intro and the parade's background carry on afterwards.
+      for (const m of el.querySelectorAll('video, audio')) m.pause?.();
+      ov = document.createElement('div');
+      ov.className = 'g-pause';
+      ov.innerHTML = `<div class="g-pause-media"></div><div class="g-pause-card"><div class="g-pause-ico">🚽</div><h2>Туалетная пауза</h2>
+        <p>${role === 'host' ? 'Игра на паузе: таймеры стоят, кнопки не жмутся.' : 'Ведущий скоро вернётся. Игра на паузе.'}</p>
+        <div class="g-pause-t" data-since="${Date.now() - p.ago}"></div><div class="g-pause-load"></div>
+        ${role === 'host' ? '<button type="button" class="btn primary big" data-tool="unpause">▶ Продолжить игру</button>' : ''}</div>`;
+      el.append(ov);
+      tick();
+    }
+    const box = ov.querySelector('.g-pause-media');
+    const mk = p.mediaKey || (p.media ? JSON.stringify(p.media) : '');
+    if (box._mk === mk) return;
+    box._mk = mk;
+    box.innerHTML = '';
+    ov.querySelector('.g-pause-load').innerHTML = '';
+    ov.classList.remove('has-media');
     if (!p.media) return;
     opts.mediaNode(p.media, true).then((n) => {
-      if (!n || !ov.isConnected) return;
-      ov.querySelector('.g-pause-media').append(n);
+      if (!n || box._mk !== mk) return;
+      // Still loading on this phone: say so on the card, the picture comes when it's here.
+      if (n.classList?.contains('pc-loading')) { ov.querySelector('.g-pause-load').append(n); return; }
+      box.append(n);
       ov.classList.add('has-media');
       const m = mediaIn(n);
       if (!m) return;
       m.loop = true;
       m.controls = false;
       m.volume = prefs.vol;
-      m.play?.().catch(() => {});
+      playSafe(m);
     });
   }
 
@@ -303,7 +340,7 @@ export function createScreen(parent, opts) {
       m.dataset.quiet = '1';
       m.dataset.resume = '1';
       m.volume = prefs.vol * 0.3;
-      m.play?.().catch(() => {});
+      playSafe(m);
     });
   }
 
