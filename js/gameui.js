@@ -1,8 +1,8 @@
 // The game screen shared by the host and the players: three layouts, soft themes and the ⚙ popover.
 // Pages build a plain "model" of what to show; this module turns it into DOM and reports clicks back.
-import { esc, nl2br, fmt, store, plural } from './util.js?v=1793919615882';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793919615882';
-import { sound } from './sound.js?v=1793919615882';
+import { esc, nl2br, fmt, store, plural } from './util.js?v=1794054826661';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1794054826661';
+import { sound } from './sound.js?v=1794054826661';
 
 export const THEMES = [['sand', 'Песок', '#5b8a85'], ['studio', 'Студия', '#3a4a85'], ['night', 'Ночь', '#a99cf0'], ['mint', 'Мята', '#4fae8f'], ['lilac', 'Лаванда', '#8c7cc2']];
 export const LAYOUTS = [['a', 'Колонка справа'], ['b', 'Счёт внизу'], ['c', 'Телешоу']];
@@ -122,7 +122,7 @@ export function createScreen(parent, opts) {
     if (out) out.textContent = `${r.value}%`;
   });
   function applyVolume(root = el) {
-    for (const m of root.querySelectorAll('audio, video')) m.volume = prefs.vol;
+    for (const m of root.querySelectorAll('audio, video')) m.volume = prefs.vol * (m.dataset.quiet ? 0.3 : 1);
   }
   el.addEventListener('submit', (e) => {
     const f = e.target.closest('form.p-form');
@@ -144,6 +144,67 @@ export function createScreen(parent, opts) {
     drawMain(m.view || { v: 'empty' });
     drawTeams(m.teams || []);
     drawPanel(m.panel, hasBar);
+    drawIntro(role === 'host' && m.view?.v === 'intro' ? m.view : null);
+    drawPause(m.pause || null);
+  }
+
+  // The first video element in a media node (the audio one comes wrapped in a div).
+  const mediaIn = (n) => (n?.matches?.('video, audio') ? n : n?.querySelector?.('video, audio'));
+
+  // ---------- intro: full screen on the host, the game starts when it ends ----------
+  function drawIntro(v) {
+    let ov = el.querySelector('.g-intro');
+    if (!v) { ov?.remove(); return; }
+    if (ov || !v.media) return;
+    ov = document.createElement('div');
+    ov.className = 'g-intro';
+    ov.innerHTML = '<div class="g-intro-media"></div><button type="button" class="g-intro-skip" data-tool="introEnd">Пропустить ›</button>';
+    el.append(ov);
+    opts.mediaNode(v.media, true).then((n) => {
+      if (!n || !ov.isConnected) return;
+      ov.firstElementChild.append(n);
+      const m = mediaIn(n);
+      if (!m) return;
+      m.controls = false;
+      m.volume = prefs.vol;
+      m.dataset.resume = '1';
+      m.addEventListener('ended', () => on('tool', { name: 'introEnd' }));
+      m.play?.().catch(() => {});
+    });
+  }
+
+  // ---------- toilet break: over everything, the game stands still ----------
+  function drawPause(p) {
+    let ov = el.querySelector('.g-pause');
+    if (!p) {
+      if (!ov) return;
+      ov.remove();
+      for (const m of el.querySelectorAll('[data-resume]')) m.play?.().catch(() => {});
+      return;
+    }
+    if (ov) return;
+    // Whatever was playing waits too; the intro and the parade's background carry on afterwards.
+    for (const m of el.querySelectorAll('video, audio')) m.pause?.();
+    ov = document.createElement('div');
+    ov.className = 'g-pause';
+    ov.innerHTML = `<div class="g-pause-media"></div><div class="g-pause-card"><div class="g-pause-ico">🚽</div><h2>Туалетная пауза</h2>
+      <p>${role === 'host' ? 'Игра на паузе: таймеры стоят, кнопки не жмутся.' : 'Ведущий скоро вернётся. Игра на паузе.'}</p>
+      <div class="g-pause-t" data-since="${Date.now() - p.ago}"></div>
+      ${role === 'host' ? '<button type="button" class="btn primary big" data-tool="unpause">▶ Продолжить игру</button>' : ''}</div>`;
+    el.append(ov);
+    tick();
+    if (!p.media) return;
+    opts.mediaNode(p.media, true).then((n) => {
+      if (!n || !ov.isConnected) return;
+      ov.querySelector('.g-pause-media').append(n);
+      ov.classList.add('has-media');
+      const m = mediaIn(n);
+      if (!m) return;
+      m.loop = true;
+      m.controls = false;
+      m.volume = prefs.vol;
+      m.play?.().catch(() => {});
+    });
   }
 
   function drawTools(t) {
@@ -152,6 +213,7 @@ export function createScreen(parent, opts) {
       setHTML($('.g-left'), `<button type="button" class="tb back" data-tool="exit" title="Выйти">←</button>`);
       html = `${t.code ? `<button type="button" class="tb code ${t.locked ? 'locked' : ''}" data-tool="code" title="${t.locked ? 'Комната закрыта: новые игроки не зайдут' : 'Код комнаты и QR'}">${t.locked ? '🔒' : '▦'} ${esc(t.code)}</button>` : ''}
         <button type="button" class="tb hide-ph" data-tool="shared" title="Видят ли игроки этот экран">${t.shared ? '📺 Общий экран' : '🖥 Свой экран'}</button>
+        <button type="button" class="tb" data-tool="pause" title="Туалетная пауза — всё замрёт, пока не вернёшься">🚽</button>
         <button type="button" class="tb" data-tool="undo" title="Отменить (Ctrl+Z)" ${t.canUndo ? '' : 'disabled'}>↶</button>
         <button type="button" class="tb hide-ph" data-tool="full" title="Во весь экран (F)">⛶</button>
         <button type="button" class="tb gear ${popOpen ? 'on' : ''}" data-tool="gear" title="Настройки">⚙</button>`;
@@ -171,9 +233,7 @@ export function createScreen(parent, opts) {
       main._key = key;
       main._html = null;
       if (v.v === 'board') main.innerHTML = `<div class="g-board"></div><div class="g-hint"></div>`;
-      else if (v.v === 'parade') main.innerHTML = v.done
-        ? '<div class="g-parade done"><p class="g-par-k">Темы игры</p><div class="g-par-all"></div></div>'
-        : '<div class="g-parade"><p class="g-par-k">Темы игры</p><div class="g-par-win"><div class="g-par-roll"></div></div></div>';
+      else if (v.v === 'parade') main.innerHTML = '<div class="g-parade"><div class="g-par-bg"></div><p class="g-par-k">Темы игры</p><div class="g-par-win"><div class="g-par-roll"></div></div><div class="g-par-all"></div></div>';
       else if (v.v === 'clue' || v.v === 'finq') main.innerHTML = `<div class="g-q"><div class="box q-cat"><span class="c"></span><b class="l"></b></div><div class="box q-body"><div class="q-text"></div><div class="q-media"></div></div><div class="q-extra"></div></div>`;
       else main.innerHTML = `<div class="g-banner"></div>`;
     }
@@ -204,6 +264,8 @@ export function createScreen(parent, opts) {
   // The clock is reset only when the host pauses, resumes or replays (seq), from the elapsed time it sent.
   let paradeRaf = 0;
   function drawParade(v) {
+    $('.g-parade').classList.toggle('done', !!v.done);
+    drawParadeBg(v);
     if (v.done) { setHTML($('.g-par-all'), v.list.map((t) => `<span>${esc(t)}</span>`).join('')); return; }
     const roll = $('.g-par-roll');
     const list = v.list.join('\n');
@@ -214,13 +276,35 @@ export function createScreen(parent, opts) {
     if (paradeRaf) return;
     const step = () => {
       const r = el.querySelector('.g-par-roll');
-      if (!r) { paradeRaf = 0; return; }
+      if (!r || r.closest('.g-parade.done')) { paradeRaf = 0; return; }
       const p = Math.min(1, Math.max(0, (r._stop ?? performance.now() - r._t0) / r._dur));
       r.style.top = `${(1 - p) * 100}%`;
       r.style.transform = `translateY(${-p * 100}%)`;
       paradeRaf = requestAnimationFrame(step);
     };
     step();
+  }
+
+  // The intro again, looping quietly and darkened behind the themes.
+  function drawParadeBg(v) {
+    const bg = $('.g-par-bg');
+    $('.g-parade').classList.toggle('has-bg', !!v.bg);
+    if (bg._k === v.bgKey) return;
+    bg._k = v.bgKey;
+    bg.innerHTML = '';
+    if (!v.bg) return;
+    opts.mediaNode(v.bg, true).then((n) => {
+      if (!n || bg._k !== v.bgKey) return;
+      bg.append(n);
+      const m = mediaIn(n);
+      if (!m) return;
+      m.loop = true;
+      m.controls = false;
+      m.dataset.quiet = '1';
+      m.dataset.resume = '1';
+      m.volume = prefs.vol * 0.3;
+      m.play?.().catch(() => {});
+    });
   }
 
   function drawClue(v) {
@@ -274,6 +358,8 @@ export function createScreen(parent, opts) {
         return `<h2>Вопрос-ставка!</h2><div class="big">${esc(v.cat || '')}</div><p>${fill(v.text, v.team)}</p>`;
       case 'roundEnd':
         return `<h2>${esc(v.head)}</h2>${standingsHTML(v.standings)}`;
+      case 'intro':
+        return '<div class="g-mod"><div class="g-mod-ico">🎬</div><h2>Заставка</h2><p class="g-mod-d">Смотрите на большой экран — сейчас начнём!</p></div>';
       case 'mod':
         return `<div class="g-mod">
           <div class="g-mod-ico">${esc(v.icon)}</div>
@@ -443,6 +529,10 @@ export function createScreen(parent, opts) {
   // ---------- timers ----------
   function tick() {
     const now = Date.now();
+    for (const t of el.querySelectorAll('[data-since]')) {
+      const s = Math.max(0, Math.floor((now - +t.dataset.since) / 1000));
+      t.textContent = `прошло ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    }
     for (const t of el.querySelectorAll('.timer')) {
       const left = Math.max(0, +t.dataset.deadline - now);
       const total = +t.dataset.total || 1;

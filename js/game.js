@@ -1,19 +1,19 @@
 // The host screen: setup, lobby with teams, board, clues, rounds, final, results.
 // All game logic lives here; phones only send intents and render the views we push.
-import * as db from './db.js?v=1793919615882';
-import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1793919615882';
-import { filled, hasQ, finalReady, roundPlayable, FLASH_KINDS } from './board.js?v=1793919615882';
-import { mediaEl, kindOf } from './media.js?v=1793919615882';
-import { play as sfx, sound, unlock } from './sound.js?v=1793919615882';
-import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1793919615882';
-import { setHTML } from './controls.js?v=1793919615882';
-import { saveGame } from './history.js?v=1793919615882';
-import { MediaSender, describe } from './mediasync.js?v=1793919615882';
-import { VERSION } from './version.js?v=1793919615882';
-import { createScreen } from './gameui.js?v=1793919615882';
-import * as screamer from './screamer.js?v=1793919615882';
-import { MODS, BOMB, GIFT, ROBIN, modHead, resolveMod } from './mods.js?v=1793919615882';
-import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1793919615882';
+import * as db from './db.js?v=1794054826661';
+import { $, esc, uid, fmt, signed, clamp, store, toast, dialog, dialogOpen, confirmDlg, promptDlg, copyText, qrSvg, plural, siteUpdatedBanner } from './util.js?v=1794054826661';
+import { filled, hasQ, finalReady, roundPlayable, FLASH_KINDS } from './board.js?v=1794054826661';
+import { mediaEl, kindOf } from './media.js?v=1794054826661';
+import { play as sfx, sound, unlock } from './sound.js?v=1794054826661';
+import { Host, errText, hostChannelName, auxTag, AUX_TAG } from './net.js?v=1794054826661';
+import { setHTML } from './controls.js?v=1794054826661';
+import { saveGame } from './history.js?v=1794054826661';
+import { MediaSender, describe } from './mediasync.js?v=1794054826661';
+import { VERSION } from './version.js?v=1794054826661';
+import { createScreen } from './gameui.js?v=1794054826661';
+import * as screamer from './screamer.js?v=1794054826661';
+import { MODS, BOMB, GIFT, ROBIN, modHead, resolveMod } from './mods.js?v=1794054826661';
+import { GAMES, INTRO_MS, newGame, scoreOf, resultText } from './minigames.js?v=1794054826661';
 
 const SETTINGS_KEY = 'plyukh-settings';
 const DEFAULTS = { dd: true, timer: 15, sound: true, penalty: false, finalTimer: 30, phoneMedia: true, phoneText: true, shared: false, mediaSync: 'all', scare: 'rare', phonePick: true, answer: 'buzz', turnMinus: false, mods: 0, mini: 'rare', secret: 0, parade: true, paradeSpeed: 1 };
@@ -134,9 +134,9 @@ export async function startPlay(root, boardId) {
     if (!prev) return toast('Нечего отменять');
     const online = Object.fromEntries(S.players.map((p) => [p.id, p.online]));
     // Undo is about the game, not about who may come in: the lock and the kicked list stay as they are.
-    const { locked, kicked, banned, bannedInfo } = S;
+    const { locked, kicked, banned, bannedInfo, pause } = S;
     S = JSON.parse(prev);
-    Object.assign(S, { locked, kicked, banned, bannedInfo });
+    Object.assign(S, { locked, kicked, banned, bannedInfo, pause });
     S.players = S.players.filter((p) => !kicked.includes(p.id));
     for (const p of S.players) p.online = !!online[p.id];
     clearBuzz();
@@ -300,8 +300,26 @@ export async function startPlay(root, boardId) {
     S.phase = 'board';
     S.parade = null;
     log({ k: 'start', r: S.round, picker: S.picker, scores: scoreMap() });
+    startIntro();
+  }
+
+  // ---------- intro ----------
+  // The board's intro plays on the host's screen first; then the theme parade, with the intro looping
+  // behind it. Phones only get "смотрите на экран": a big video would take ages to send them.
+  const introRef = () => board.intro?.media || null;
+  function startIntro() {
+    const ref = introRef();
+    if (!ref) { if (settings.parade) startParade('board'); return; }
+    S.phase = 'intro';
+    S.introUntil = kindOf(ref) === 'image' ? Date.now() + 6000 : 0;
+  }
+  function endIntro() {
+    S.phase = 'board';
+    S.introUntil = 0;
     if (settings.parade) startParade('board');
   }
+  // Behind the parade: the intro again, on a loop. A YouTube intro has no loop we could control.
+  const paradeBg = () => { const r = introRef(); return r && kindOf(r) !== 'youtube' ? r : null; };
 
   // ---------- theme parade ----------
   // Before the first question all themes of the game, the final's too, shuffled, float up every screen
@@ -702,6 +720,29 @@ export async function startPlay(root, boardId) {
       Object.assign(p, { start: Date.now(), paused: null, done: false, dur: paradeDur(p.list.length) });
       p.seq++;
     },
+    introEnd() {
+      if (S.phase === 'intro') endIntro();
+    },
+    // Toilet break: everything stands still until the host is back.
+    pause() {
+      if (S.pause || ['setup', 'lobby'].includes(S.phase)) return;
+      S.pause = { at: Date.now() };
+      const p = S.parade;
+      if (S.phase === 'parade' && p && !p.done && p.paused == null) { p.paused = paradeElapsed(p); p.seq++; S.pause.parade = true; }
+    },
+    unpause() {
+      if (!S.pause) return;
+      const d = Date.now() - S.pause.at;
+      const p = S.parade;
+      if (S.pause.parade && p) { p.start = Date.now() - p.paused; p.paused = null; p.seq++; }
+      S.pause = null;
+      // Every clock the game runs moves on by the length of the break.
+      const c = S.clue;
+      if (c) for (const k of ['deadline', 'ansDeadline', 'flashUntil']) if (c[k]) c[k] += d;
+      if (S.fin?.deadline) S.fin.deadline += d;
+      if (S.mini?.until) S.mini.until += d;
+      if (S.introUntil) S.introUntil += d;
+    },
     paradeEnd() {
       if (S.phase !== 'parade') return;
       S.phase = S.parade.after || 'board';
@@ -734,6 +775,8 @@ export async function startPlay(root, boardId) {
     if (d.t === 'hello') return hello(conn, d);
     const pid = conn._pid;
     const p = player(pid);
+    // During a toilet break nobody plays.
+    if (S.pause && ['buzz', 'early', 'pick', 'modTarget', 'wager'].includes(d.t)) return;
     switch (d.t) {
       case 'buzz': return onBuzz(pid, d);
       case 'early': return onEarly(pid);
@@ -920,7 +963,11 @@ export async function startPlay(root, boardId) {
     if (S.phase === 'mini' && S.mini) return miniView(pid);
     if (S.phase === 'parade' && S.parade) {
       const p = S.parade;
-      return { v: 'parade', key: p.done ? 'done' : 'roll', list: p.list, dur: p.dur, elapsed: paradeElapsed(p), paused: p.paused != null, seq: p.seq, done: p.done };
+      const bg = host ? paradeBg() : null;
+      return { v: 'parade', key: 'parade', list: p.list, dur: p.dur, elapsed: paradeElapsed(p), paused: p.paused != null, seq: p.seq, done: p.done, bg, bgKey: bg ? JSON.stringify(bg) : '' };
+    }
+    if (S.phase === 'intro') {
+      return { v: 'intro', key: 'intro', media: host ? introRef() : null };
     }
     if (S.phase === 'clue') {
       const cl = clueAt(c);
@@ -1125,7 +1172,7 @@ export async function startPlay(root, boardId) {
     if (S.phase === 'final' && f && t) {
       me.fin = { stage: f.stage, max: Math.max(0, t.score), wager: f.wagers[t.id] ?? null, answer: f.answers[t.id] ?? null, judged: f.judged[t.id] ?? null };
     }
-    return { t: 'state', phase: S.phase, mode: S.mode, answer: settings.answer, title: board.title, round: S.phase === 'final' ? 'Финал' : R()?.name || '', view, teams: teamsFor(pid), me, teamMode: S.teamMode };
+    return { t: 'state', pause: S.pause ? { ago: Date.now() - S.pause.at } : null, phase: S.phase, mode: S.mode, answer: settings.answer, title: board.title, round: S.phase === 'final' ? 'Финал' : R()?.name || '', view, teams: teamsFor(pid), me, teamMode: S.teamMode };
   }
 
   function hostView() {
@@ -1139,6 +1186,7 @@ export async function startPlay(root, boardId) {
         grid: r.categories.map((cat, ci) => cat.clues.map((x, qi) => ({ f: filled(x), u: !!S.used[keyOf(S.round, ci, qi)], d: !!S.dds[keyOf(S.round, ci, qi)], m: x.mod || S.mods?.[keyOf(S.round, ci, qi)] || '' }))),
       } : null,
       clue: c ? { cat: r.categories[c.c].name, value: worth() || c.value, q: cl.q, a: cl.a, stage: c.stage, dd: c.dd, status: statusText() } : null,
+      paused: !!S.pause,
       parade: S.phase === 'parade' && S.parade ? { list: S.parade.list, status: statusText() } : null,
       mini: S.phase === 'mini' && S.mini ? { name: `${GAMES[S.mini.game.kind].icon} ${GAMES[S.mini.game.kind].name}`, status: statusText() } : null,
       fin: S.phase === 'final' ? { cat: board.final.category, q: board.final.q, a: board.final.a, stage: S.fin.stage, status: statusText() } : null,
@@ -1339,6 +1387,7 @@ export async function startPlay(root, boardId) {
       if (f.stage === 'clue') return `Ответы: ${Object.keys(f.answers).length} из ${S.teams.length}`;
       return 'Проверяем ответы';
     }
+    if (S.phase === 'intro') return 'Идёт заставка';
     if (S.phase === 'parade' && S.parade) return S.parade.done ? 'Темы показаны' : 'Темы проплывают по экрану';
     if (S.phase === 'mini' && S.mini) return `Мини-игра «${GAMES[S.mini.game.kind].name}»${S.mini.stage === 'done' ? ': итоги' : ''}`;
     if (!c) return '';
@@ -1465,6 +1514,7 @@ export async function startPlay(root, boardId) {
         return rows;
       }
     }
+    if (S.phase === 'intro') return [{ items: [{ label: 'Пропустить заставку →', act: 'introEnd', cls: 'primary big', key: 'Пробел' }] }];
     if (S.phase === 'parade' && S.parade) {
       const p = S.parade;
       const first = !S.log?.some((e) => e.k === 'pick');
@@ -1497,6 +1547,7 @@ export async function startPlay(root, boardId) {
     let own = 0;
     for (const r of board.rounds) for (const c of r.categories) own += c.clues.filter((cl) => cl.mod).length;
     if (own) out.push(`⚡ модернизаторов из редактора — ${own}`);
+    if (introRef()) out.push('🎬 интро перед игрой');
     if (settings.dd) out.push('★ вопросы-ставки');
     if (usesPhones() && settings.mini !== 'off') out.push(`🎮 мини-игры (${settings.mini === 'often' ? 'часто' : 'редко'})`);
     if (usesPhones() && settings.scare !== 'off') out.push('👻 скример');
@@ -1524,6 +1575,9 @@ export async function startPlay(root, boardId) {
         return { kind: 'host', lbl: 'Ход игры', text: `Ход: {team}. Вопрос им выбирают {team2} — за верный ответ. ${how}`, team: tinfo(S.turn), team2: tinfo(S.picker), controls: [] };
       }
       return { kind: 'host', lbl: 'Ход игры', text: `${turns() ? 'Ход: {team}, сами выбирают вопрос.' : 'Выбирают {team}.'} ${how}`, team: tinfo(S.picker), controls: [] };
+    }
+    if (S.phase === 'intro') {
+      return { kind: 'host', lbl: 'Заставка', text: settings.parade ? 'Идёт интро. Когда закончится — начнётся парад тем.' : 'Идёт интро. Когда закончится — откроется доска.', controls: controls() };
     }
     if (S.phase === 'parade' && S.parade) {
       const p = S.parade;
@@ -1794,6 +1848,7 @@ export async function startPlay(root, boardId) {
         ...(usesPhones() ? [{ name: 'remote', label: '📱 Пульт на телефоне (QR)' }] : []),
         ...(usesPhones() ? [{ name: 'lock', label: S.locked ? '🔓 Открыть комнату' : '🔒 Закрыть комнату — новые не зайдут' }] : []),
         ...(usesPhones() ? [{ name: 'players', label: `👥 Игроки — выгнать или перевести${S.banned?.length ? ` · разбанить (${S.banned.length})` : ''}` }] : []),
+        { name: 'pause', label: '🚽 Туалетная пауза' },
         { name: 'addTeam', label: '+ Добавить команду' },
         ...(usesPhones() && S.phase === 'board' ? [{ name: 'mini', label: '🎮 Мини-игра прямо сейчас' }] : []),
         ...(S.phase === 'board' ? [{ name: 'parade', label: '🎞 Показать темы игры ещё раз' }] : []),
@@ -1813,6 +1868,7 @@ export async function startPlay(root, boardId) {
       view: viewFor(null),
       teams: teamsFor(null),
       panel: hostPanel(),
+      pause: S.pause ? { ago: Date.now() - S.pause.at, media: board.pause?.media || null } : null,
     });
   }
 
@@ -1828,12 +1884,16 @@ export async function startPlay(root, boardId) {
         if (d.name === 'undo') return act('undo');
         if (d.name === 'full') return toggleFullscreen();
         if (d.name === 'exit') return exitGame();
+        if (d.name === 'introEnd') return act('introEnd');
+        if (d.name === 'pause') return act('pause');
+        if (d.name === 'unpause') return act('unpause');
         if (d.name === 'shared') { settings.shared = !settings.shared; saveSettings(); toast(settings.shared ? 'Общий экран: ответы скрыты' : 'Свой экран: ответы видны'); return commit(); }
         return;
       case 'link':
         if (d.name === 'hostwin') return openHostWindow();
         if (d.name === 'remote') return showRemoteQR();
         if (d.name === 'mini') return act('mini');
+        if (d.name === 'pause') return act('pause');
         if (d.name === 'parade') return act('parade');
         if (d.name === 'players') return playersDialog();
         if (d.name === 'lock') return act('lock');
@@ -1959,8 +2019,10 @@ export async function startPlay(root, boardId) {
   const tick = setInterval(() => {
     if (!S || destroyed) return;
     if (hostWinShown !== hostWinOpen()) { hostWinShown = !hostWinShown; render(); }
+    if (S.pause) return;
     const c = S.clue;
     const now = Date.now();
+    if (S.phase === 'intro' && S.introUntil && now >= S.introUntil) { endIntro(); commit(); }
     if (S.phase === 'mini' && S.mini && miniTick(now)) commit();
     if (S.phase === 'clue' && c?.stage === 'flash' && now >= c.flashUntil) { afterFlash(); sfx('open'); commit(); }
     const p = S.parade;
@@ -1987,8 +2049,13 @@ export async function startPlay(root, boardId) {
     const c = S.clue;
     if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); return act('undo'); }
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (S.pause) {
+      if (e.code === 'Space' || e.code === 'Escape') { e.preventDefault(); act('unpause'); }
+      return;
+    }
     if (e.code === 'Space') {
       e.preventDefault();
+      if (S.phase === 'intro') return act('introEnd');
       if (c?.stage === 'reading' && usesPhones() && !c.dd) return act('open');
       if (c?.stage === 'answer') return act('cont');
       if (c?.stage === 'mod' && c.mod.done) return act('modNext');
@@ -2023,6 +2090,7 @@ export async function startPlay(root, boardId) {
       ensureTeams();
       if (S.phase === 'mini') { S.phase = S.mini?.after || 'board'; S.mini = null; }
       if (S.phase === 'parade') { S.phase = S.parade?.after || 'board'; S.parade = null; }
+      if (S.phase === 'intro') S.phase = 'board';
       for (const p of S.players) p.online = false;
       if (S.clue) {
         clearBuzz();

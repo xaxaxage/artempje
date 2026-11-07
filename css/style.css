@@ -906,6 +906,9 @@ input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--orange); f
 .ce-mod-desc { margin: 6px 0 0; min-height: 1em; }
 .ed-hint { margin-top: 14px; }
 .final-ed { max-width: 760px; }
+.extras { display: grid; gap: 14px; max-width: 760px; }
+.extras h3 { margin: 0 0 6px; }
+.extras .mz-phone { display: none; }
 
 .lbl { display: block; font-weight: 700; margin: 12px 0 6px; }
 .clue-ed .lbl:first-of-type { margin-top: 6px; }

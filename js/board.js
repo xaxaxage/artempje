@@ -1,5 +1,5 @@
-import { uid } from './util.js?v=1793919615882';
-import { isMod } from './mods.js?v=1793919615882';
+import { uid } from './util.js?v=1794054826661';
+import { isMod } from './mods.js?v=1794054826661';
 
 export const ROUND1_VALUES = [200, 400, 600, 800, 1000];
 
@@ -22,15 +22,22 @@ export function newBoard(title = 'Новая игра') {
     updatedAt: Date.now(),
     rounds: [newRound('Раунд 1')],
     final: { enabled: true, category: '', ...newClue() },
+    intro: { media: null },
+    pause: { media: null },
   };
 }
 
-// Every clue in the board, including the final one.
+// Board-wide media in the same shape as a clue, so export, import, copy and delete carry them too:
+// the intro played before the theme parade, and the loop shown during a toilet break.
+export const EXTRAS = ['intro', 'pause'];
+
+// Every clue in the board, including the final one and the board-wide extras.
 export function* allClues(board) {
   for (const [ri, r] of board.rounds.entries())
     for (const [ci, c] of r.categories.entries())
       for (const [qi, clue] of c.clues.entries()) yield { clue, ri, ci, qi };
   if (board.final) yield { clue: board.final, final: true };
+  for (const k of EXTRAS) if (board[k]) yield { clue: board[k], extra: k };
 }
 
 export function mediaRefs(board) {
@@ -52,10 +59,10 @@ export const roundPlayable = (r) => r.categories.some((c) => c.clues.some(filled
 
 export function stats(board) {
   let total = 0, done = 0, media = 0;
-  for (const { clue, final } of allClues(board)) {
+  for (const { clue, final, extra } of allClues(board)) {
     if (clue.media) media++;
     if (clue.aMedia) media++;
-    if (final) continue;
+    if (final || extra) continue;
     total++;
     if (filled(clue)) done++;
   }
@@ -85,6 +92,7 @@ export function normalize(b) {
     }
   }
   b.final = { enabled: true, category: '', ...newClue(), ...(b.final || {}) };
+  for (const k of EXTRAS) b[k] = { media: b[k]?.media || null };
   b.createdAt ||= Date.now();
   b.updatedAt = Date.now();
   return b;

@@ -1,9 +1,9 @@
-import * as db from './db.js?v=1793919615882';
-import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1793919615882';
-import { newClue, newRound, filled, hasQ, FLASH_KINDS } from './board.js?v=1793919615882';
-import { MODS, MOD_IDS, RANDOM, modIcon, modName, chancesText } from './mods.js?v=1793919615882';
-import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1793919615882';
-import * as screamer from './screamer.js?v=1793919615882';
+import * as db from './db.js?v=1794054826661';
+import { $, $$, esc, fmt, toast, dialog, confirmDlg, promptDlg, debounce, pickFile } from './util.js?v=1794054826661';
+import { newClue, newRound, filled, hasQ, FLASH_KINDS } from './board.js?v=1794054826661';
+import { MODS, MOD_IDS, RANDOM, modIcon, modName, chancesText } from './mods.js?v=1794054826661';
+import { storeFile, dropRef, parseLink, mediaEl, kindOf, KIND_LABEL, KIND_ICON } from './media.js?v=1794054826661';
+import * as screamer from './screamer.js?v=1794054826661';
 
 export async function renderEditor(root, id) {
   const board = await db.getBoard(id);
@@ -47,6 +47,7 @@ export async function renderEditor(root, id) {
     $('.tabs', root).innerHTML =
       board.rounds.map((r, i) => `<button class="tab ${tab === i ? 'on' : ''}" data-tab="${i}">${esc(r.name)}</button>`).join('') +
       `<button class="tab ${tab === 'final' ? 'on' : ''}" data-tab="final">Финал${board.final.enabled ? '' : ' (выкл)'}</button>` +
+      `<button class="tab ${tab === 'extras' ? 'on' : ''}" data-tab="extras">🎬 Заставки${board.intro?.media || board.pause?.media ? ' ✓' : ''}</button>` +
       `<button class="tab add" data-tab="add" title="Добавить раунд">+ Раунд</button>`;
   }
   $('.tabs', root).addEventListener('click', async (e) => {
@@ -59,7 +60,7 @@ export async function renderEditor(root, id) {
       board.rounds.push(r);
       tab = board.rounds.length - 1;
       touch();
-    } else tab = v === 'final' ? 'final' : +v;
+    } else tab = v === 'final' || v === 'extras' ? v : +v;
     renderTabs();
     renderBody();
   });
@@ -68,6 +69,7 @@ export async function renderEditor(root, id) {
   function renderBody() {
     const body = $('.ed-body', root);
     if (tab === 'final') return renderFinal(body);
+    if (tab === 'extras') return renderExtras(body);
     const r = board.rounds[tab];
     body.innerHTML = `
       <div class="ed-tools">
@@ -136,7 +138,7 @@ export async function renderEditor(root, id) {
     const cm = e.target.closest('[data-catmenu]');
     if (cm) return catMenu(+cm.dataset.catmenu);
     const a = e.target.closest('[data-a]')?.dataset.a;
-    if (!a || tab === 'final') return;
+    if (!a || tab === 'final' || tab === 'extras') return;
     const r = board.rounds[tab];
     if (a === 'renameRound') {
       const n = await promptDlg('Название раунда', r.name);
@@ -437,6 +439,34 @@ export async function renderEditor(root, id) {
         load();
       },
     }).then(() => { activeZone = null; });
+  }
+
+  // ---------- intro and toilet break ----------
+  function renderExtras(body) {
+    board.intro ||= { media: null };
+    board.pause ||= { media: null };
+    body.innerHTML = `
+      <div class="extras">
+        <div class="card">
+          <h3>🎬 Интро в начале игры</h3>
+          <p class="muted small">Играет на весь экран у ведущего сразу после «Начать игру». Когда закончится, начнётся парад тем, а интро пойдёт по кругу на заднем фоне — тише и затемнённое. Лучше всего видеофайл; можно музыку или картинку (6 секунд). С YouTube конец не виден — жми «Пропустить».</p>
+          <div class="media-zone" data-slot="intro"></div>
+        </div>
+        <div class="card">
+          <h3>🚽 Туалетная пауза</h3>
+          <p class="muted small">Видео или картинка на весь экран, пока ты отошёл. Пауза — кнопка 🚽 вверху экрана игры или на пульте: таймеры замирают, игроки видят «ведущий скоро вернётся». Без видео будет просто заставка «перерыв».</p>
+          <div class="media-zone" data-slot="pause"></div>
+        </div>
+      </div>`;
+    const onChange = () => { touch(); renderTabs(); };
+    const zi = mediaZone($('[data-slot=intro]', body), () => board.intro.media, (v) => { board.intro.media = v; }, onChange);
+    mediaZone($('[data-slot=pause]', body), () => board.pause.media, (v) => { board.pause.media = v; }, onChange);
+    body.onpaste = (e) => {
+      const file = [...(e.clipboardData?.files || [])][0];
+      if (!file) return;
+      e.preventDefault();
+      (activeZone && body.contains(activeZone.el) ? activeZone : zi).handleFile(file);
+    };
   }
 
   // ---------- final ----------

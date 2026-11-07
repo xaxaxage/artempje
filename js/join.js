@@ -1,13 +1,13 @@
 // Player page: the game screen (board, questions, buzzing) on a phone or a computer,
 // or the host's remote when opened with ?k=<host key>.
-import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1793919615882';
-import { VERSION } from './version.js?v=1793919615882';
-import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1793919615882';
-import { controlsHTML, bindControls, setHTML } from './controls.js?v=1793919615882';
-import { MediaReceiver } from './mediasync.js?v=1793919615882';
-import { createScreen, prefs, ARTEM_PHOTO, artems } from './gameui.js?v=1793919615882';
-import * as screamer from './screamer.js?v=1793919615882';
-import { MiniPlayer } from './minigames.js?v=1793919615882';
+import { $, esc, nl2br, fmt, signed, store, uid, mediaVolume, toast, banner, dialog, confirmDlg, LOGO_SVG } from './util.js?v=1794054826661';
+import { VERSION } from './version.js?v=1794054826661';
+import { Client, LocalLink, auxTag, AUX_TAG } from './net.js?v=1794054826661';
+import { controlsHTML, bindControls, setHTML } from './controls.js?v=1794054826661';
+import { MediaReceiver } from './mediasync.js?v=1794054826661';
+import { createScreen, prefs, ARTEM_PHOTO, artems } from './gameui.js?v=1794054826661';
+import * as screamer from './screamer.js?v=1794054826661';
+import { MiniPlayer } from './minigames.js?v=1794054826661';
 
 const app = document.getElementById('app');
 const params = new URLSearchParams(location.search);
@@ -286,6 +286,7 @@ function playerPanel(v) {
       : { kind: 'text', lbl: 'Скоро начнём', text: 'Ведущий собирает игроков.' };
   }
   if (v.phase === 'mini') return { kind: 'text', lbl: 'Мини-игра', text: 'Играем прямо на телефоне!' };
+  if (v.phase === 'intro') return { kind: 'text', lbl: 'Заставка', text: 'Смотрите на большой экран — скоро начнём.' };
   if (v.phase === 'parade') return { kind: 'text', lbl: 'Темы игры', text: v.view?.done ? 'Это все темы. Скоро первый вопрос!' : 'Ведущий объявляет темы — среди них и тема финала.' };
   if (v.phase === 'clue' && c) {
     if (c.mod) {
@@ -459,6 +460,7 @@ function renderPlayer() {
     view: vw,
     teams,
     panel: playerPanel(v),
+    pause: v.pause || null,
   });
   if (vw.media?.key && !mediaReady(vw.media)) screen.setProgress(`${Math.round(receiver.progress(vw.media.key) * 100)}%`);
 }
@@ -473,7 +475,7 @@ function mountRemote() {
     <div class="rm-ctl"></div>
     <div class="rm-players"></div>
     <div class="rm-kick"></div>
-    <div class="rm-foot"><button class="btn" data-act="undo">↶ Отменить последнее</button> <button class="btn" data-act="lock"></button></div>
+    <div class="rm-foot"><button class="btn" data-act="undo">↶ Отменить последнее</button> <button class="btn" data-act="lock"></button> <button class="btn" data-act="pause" data-pausebtn></button></div>
   </div>`;
   bindControls($('.rm', app), (a, args) => {
     if (!client.send({ t: 'act', a, args })) toast('Нет связи с экраном');
@@ -536,6 +538,10 @@ function renderRemote() {
     </div>`).join('')}</div>`);
   $('.rm-foot [data-act=undo]', app).disabled = !v.canUndo;
   $('.rm-foot [data-act=lock]', app).textContent = v.locked ? '🔓 Открыть комнату' : '🔒 Закрыть комнату';
+  const pauseBtn = $('.rm-foot [data-pausebtn]', app);
+  pauseBtn.dataset.act = v.paused ? 'unpause' : 'pause';
+  pauseBtn.textContent = v.paused ? '▶ Продолжить игру' : '🚽 Туалетная пауза';
+  pauseBtn.classList.toggle('primary', !!v.paused);
 }
 
 // Typed scores: a plain number sets the score, +N or −N changes it by that much.
